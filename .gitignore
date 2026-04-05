@@ -1,0 +1,8 @@
+.pio
+.vscode
+*.hex
+*.elf
+*.bin
+*.map
+.DS_Store
+Thumbs.db
