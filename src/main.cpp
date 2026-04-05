@@ -18,21 +18,28 @@ uint16_t sensorValues[NUM_SENSORS];
 #define IN3 10
 #define IN4 11
 
-// ===================== PARÁMETROS =====================
+// ===================== PARÁMETROS PID =====================
 
-int velocidadBase = 170;
+int velocidadBase = 200;  // Velocidad base
 int velocidadMax  = 255;
 
-float Kp = 0.055;
-float Ki = 0.0005;
-float Kd = 0.22;
+// PID AJUSTADO para curvas
+float Kp = 0.065;  // Control proporcional (aumentado para curvas)
+float Ki = 0.0003; // Control integral (recuperado)
+float Kd = 0.08;   // Control derivativo (aumentado)
 
 int  error         = 0;
 int  errorAnterior = 0;
 long integral      = 0;
 
-// Prototipos de funciones (requeridos para C++ estándar en PlatformIO)
+// ===================== DEBUG =====================
+#define DEBUG_MODO_SENSORES 0  // 1 = ON, 0 = OFF
+unsigned long ultimaImpresion = 0;
+const unsigned long INTERVALO_DEBUG = 200;
+
+// Prototipos de funciones
 void moverMotores(int velIzq, int velDer);
+void imprimirDebug(uint16_t posicion, int error, int correccion, int velIzq, int velDer);
 
 // ===================== SETUP =====================
 
@@ -48,29 +55,58 @@ void setup()
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
 
-  // Configuración QTR v4.0.0
-  qtr.setTypeRC();
-  qtr.setSensorPins((const uint8_t[]){A0,A1,A2,A3,A4,A5,2,3}, NUM_SENSORS);
-  qtr.setEmitterPin(4);
+  // Activar emisor IR en Pin 7
+  pinMode(7, OUTPUT);
+  digitalWrite(7, HIGH);
 
-  Serial.println("Calibrando sensores...");
+  // Configuración QTR
+  qtr.setTypeRC();
+  qtr.setSensorPins((const uint8_t[]){A0, A1, A2, A3, A4, A5, 2, 3}, NUM_SENSORS);
+  qtr.setEmitterPin(7);
+
+  Serial.println("\n╔════════════════════════════════════╗");
+  Serial.println("║  LINE FOLLOWER - Iniciando...      ║");
+  Serial.println("╚════════════════════════════════════╝\n");
+
+  // Calibración mejorada
+  Serial.println("Calibrando sensores por 2.5 segundos...");
+  Serial.println("(Mueve el robot sobre blanco y negro)");
+  
   for (int i = 0; i < 250; i++)
   {
     qtr.calibrate();
     delay(10);
+    if (i % 50 == 0) Serial.print(".");
   }
-  Serial.println("Calibracion terminada");
+  
+  Serial.println("\n✓ Calibración completada");
+  Serial.println("═════════════════════════════════════\n");
+  
+  // Lectura inicial para estabilizar
+  Serial.println("Estabilizando sensores...");
+  for (int i = 0; i < 20; i++)
+  {
+    qtr.readLineBlack(sensorValues);
+    delay(20);
+  }
+  
+  // Initializar PID con valores iniciales
+  error = 0;
+  errorAnterior = 0;
+  integral = 0;
+  
+  Serial.println("✓ Sistema listo\n");
   delay(1000);
 }
 
-// ===================== MOTORES =====================
+// ===================== FUNCIONES =====================
 
 void moverMotores(int velIzq, int velDer)
 {
   velIzq = constrain(velIzq, -velocidadMax, velocidadMax);
   velDer = constrain(velDer, -velocidadMax, velocidadMax);
 
-  // Motor izquierdo (polaridad invertida)
+  // Motor izquierdo
   if (velIzq >= 0)
   {
     digitalWrite(IN1, LOW);
@@ -83,18 +119,36 @@ void moverMotores(int velIzq, int velDer)
   }
   analogWrite(ENA, abs(velIzq));
 
-  // Motor derecho (polaridad invertida)
+  // Motor derecho (INVERTIDO)
   if (velDer >= 0)
-  {
-    digitalWrite(IN3, LOW);
-    digitalWrite(IN4, HIGH);
-  }
-  else
   {
     digitalWrite(IN3, HIGH);
     digitalWrite(IN4, LOW);
   }
+  else
+  {
+    digitalWrite(IN3, LOW);
+    digitalWrite(IN4, HIGH);
+  }
   analogWrite(ENB, abs(velDer));
+}
+
+void imprimirDebug(uint16_t posicion, int error, int correccion, int velIzq, int velDer)
+{
+  unsigned long ahora = millis();
+  if (ahora - ultimaImpresion < INTERVALO_DEBUG) return;
+  ultimaImpresion = ahora;
+
+  Serial.print("POS:");
+  Serial.print(posicion);
+  Serial.print(" | ERR:");
+  Serial.print(error);
+  Serial.print(" | CORR:");
+  Serial.print(correccion);
+  Serial.print(" | VL:");
+  Serial.print(velIzq);
+  Serial.print(" VR:");
+  Serial.println(velDer);
 }
 
 // ===================== LOOP =====================
@@ -102,65 +156,73 @@ void moverMotores(int velIzq, int velDer)
 void loop()
 {
   uint16_t posicion = qtr.readLineBlack(sensorValues);
-
+  
   error = posicion - 3500;
 
-  // --- Serial (Debug Individual Sensors) ---
-  Serial.print("SENSORS: ");
-  for (int i = 0; i < NUM_SENSORS; i++)
-  {
-    Serial.print(sensorValues[i]);
-    Serial.print("\t");
-  }
-  Serial.print("| ");
-
-  // --- Detectar línea ---
+  // Detectar si hay línea (umbral mejorado)
   bool lineaDetectada = false;
+  int sensorActivoCount = 0;
+  
   for (int i = 0; i < NUM_SENSORS; i++)
   {
-    if (sensorValues[i] > 200)
+    if (sensorValues[i] > 400)  // Threshold aumentado (era 200)
     {
       lineaDetectada = true;
-      break;
+      sensorActivoCount++;
     }
   }
 
-  if (!lineaDetectada)
+  if (DEBUG_MODO_SENSORES)
   {
-    Serial.println("SIN LINEA - girando");
+    imprimirDebug(posicion, error, 0, 0, 0);
+  }
+
+  // Si no detecta línea → girar suavemente SIN MARCHA ATRÁS
+  if (!lineaDetectada || sensorActivoCount < 2)  // Requiere al menos 2 sensores
+  {
+    if (DEBUG_MODO_SENSORES) Serial.println("→ SIN LINEA - VIRANDO SUAVE");
+    
+    // Girar hacia donde estaba el error, pero sin marcha atrás
     if (errorAnterior > 0)
-      moverMotores(180, -180);
+      moverMotores(120, 60);  // Gira a la derecha lentamente
     else
-      moverMotores(-180, 180);
+      moverMotores(60, 120);  // Gira a la izquierda lentamente
     return;
   }
 
-  // --- PID ---
-  integral += error;
-  integral = constrain(integral, -1500, 1500);
+  // ═══════════════════ PID CONTROL ═══════════════════
 
-  int derivada   = error - errorAnterior;
+  // Integral con anti-windup
+  integral += error;
+  integral = constrain(integral, -600, 600);  // Rango ampliado para curvas
+
+  // Derivada
+  int derivada = error - errorAnterior;
+  
+  // Cálculo de corrección
   int correccion = (Kp * error) + (Ki * integral) + (Kd * derivada);
-  correccion     = constrain(correccion, -150, 150);
+  correccion = constrain(correccion, -100, 100);  // Límite para curvas
 
   errorAnterior = error;
 
-  // --- Velocidad adaptativa ---
-  int velocidadActual;
-  if      (abs(error) < 300)  velocidadActual = 230;
-  else if (abs(error) > 2000) velocidadActual = 140;
-  else                        velocidadActual = velocidadBase;
+  // Velocidad adaptativa
+  int velocidadActual = velocidadBase;
+  
+  if (abs(error) < 200)        velocidadActual = 240;  // Recto
+  else if (abs(error) > 2000)  velocidadActual = 140;  // Curva cerrada
+  else                         velocidadActual = 190;  // Curva normal
 
   int velIzq = velocidadActual + correccion;
   int velDer = velocidadActual - correccion;
 
+  // Asegurar que nunca va hacia atrás (ambos motores siempre positivos)
+  velIzq = constrain(velIzq, 0, velocidadMax);
+  velDer = constrain(velDer, 0, velocidadMax);
+
   moverMotores(velIzq, velDer);
 
-  // --- Serial (PID & Motors) ---
-  Serial.print("Pos:"); Serial.print(posicion);
-  Serial.print(" Err:"); Serial.print(error);
-  Serial.print(" Corr:"); Serial.print(correccion);
-  Serial.print(" Vel:"); Serial.print(velocidadActual);
-  Serial.print(" IZQ:"); Serial.print(velIzq);
-  Serial.print(" DER:"); Serial.println(velDer);
+  if (DEBUG_MODO_SENSORES)
+  {
+    imprimirDebug(posicion, error, correccion, velIzq, velDer);
+  }
 }
