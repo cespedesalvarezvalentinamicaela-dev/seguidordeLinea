@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <QTRSensors.h>
+#include <EEPROM.h>
 
 // ===================== SENSORES =====================
 
@@ -22,6 +23,14 @@ uint16_t sensorValues[NUM_SENSORS];
 
 int velocidadBase = 200;  // Velocidad base
 int velocidadMax  = 255;
+
+// OFFSET DE MOTORES (EEPROM: direcciones 0-1)
+int offsetIzq = 0;  // -20 a +20 para compensar velocidad del motor izquierdo
+int offsetDer = 0;  // -20 a +20 para compensar velocidad del motor derecho
+#define EEPROM_OFFSET_IZQ 0
+#define EEPROM_OFFSET_DER 1
+#define MODO_CALIBRACION 2
+bool enModoCaliberacion = false;
 
 // PID AJUSTADO para curvas
 float Kp = 0.065;  // Control proporcional (aumentado para curvas)
@@ -95,6 +104,24 @@ void setup()
   errorAnterior = 0;
   integral = 0;
   
+  // Cargar offsets de EEPROM
+  offsetIzq = (int8_t)EEPROM.read(EEPROM_OFFSET_IZQ);
+  offsetDer = (int8_t)EEPROM.read(EEPROM_OFFSET_DER);
+  
+  Serial.println("╔════════════════════════════════════╗");
+  Serial.println("║  OFFSETS DE MOTORES (EEPROM)      ║");
+  Serial.print("║  Izq: "); Serial.print(offsetIzq); Serial.println(" |");
+  Serial.print("║  Der: "); Serial.print(offsetDer); Serial.println(" |");
+  Serial.println("╚════════════════════════════════════╝\n");
+  
+  Serial.println("MODO CALIBRACION: Envía 'C' para activar");
+  Serial.println("  'I': Aumentar offset izquierdo");
+  Serial.println("  'J': Disminuir offset izquierdo");
+  Serial.println("  'D': Aumentar offset derecho");
+  Serial.println("  'F': Disminuir offset derecho");
+  Serial.println("  'S': Guardar y salir");
+  Serial.println("  'R': Reset offsets\n");
+  
   Serial.println("✓ Sistema listo\n");
   delay(1000);
 }
@@ -103,6 +130,14 @@ void setup()
 
 void moverMotores(int velIzq, int velDer)
 {
+  velIzq = constrain(velIzq, -velocidadMax, velocidadMax);
+  velDer = constrain(velDer, -velocidadMax, velocidadMax);
+  
+  // Aplicar offsets de calibración
+  velIzq += offsetIzq;
+  velDer += offsetDer;
+  
+  // Recalcular constrain después de offsets
   velIzq = constrain(velIzq, -velocidadMax, velocidadMax);
   velDer = constrain(velDer, -velocidadMax, velocidadMax);
 
@@ -133,6 +168,62 @@ void moverMotores(int velIzq, int velDer)
   analogWrite(ENB, abs(velDer));
 }
 
+// ===================== FUNCIONES EEPROM =====================
+
+void guardarOffsets()
+{
+  EEPROM.write(EEPROM_OFFSET_IZQ, (int8_t)offsetIzq);
+  EEPROM.write(EEPROM_OFFSET_DER, (int8_t)offsetDer);
+  Serial.println("\n✓ Offsets guardados en EEPROM");
+}
+
+void mostrarOffsets()
+{
+  Serial.print("\n═══ OFFSETS ACTUALES ═══\n");
+  Serial.print("Izquierdo: "); Serial.println(offsetIzq);
+  Serial.print("Derecho:   "); Serial.println(offsetDer);
+  Serial.println("════════════════════════════\n");
+}
+
+void procesarCalibracion(char cmd)
+{
+  switch(cmd)
+  {
+    case 'C':  // Iniciar calibración
+      enModoCaliberacion = !enModoCaliberacion;
+      if(enModoCaliberacion)
+        Serial.println("\n→ MODO CALIBRACIÓN ACTIVADO");
+      else
+        Serial.println("\n→ Modo calibración desactivado");
+      break;
+    case 'I':  // Offset izquierdo
+      offsetIzq++;
+      Serial.print("Offset Izq: "); Serial.println(offsetIzq);
+      break;
+    case 'J':  // Offset izquierdo hacia atrás
+      offsetIzq--;
+      Serial.print("Offset Izq: "); Serial.println(offsetIzq);
+      break;
+    case 'D':  // Offset derecho
+      offsetDer++;
+      Serial.print("Offset Der: "); Serial.println(offsetDer);
+      break;
+    case 'F':  // Offset derecho hacia atrás
+      offsetDer--;
+      Serial.print("Offset Der: "); Serial.println(offsetDer);
+      break;
+    case 'S':  // Guardar
+      guardarOffsets();
+      mostrarOffsets();
+      break;
+    case 'R':  // Reset offsets
+      offsetIzq = 0;
+      offsetDer = 0;
+      Serial.println("✓ Offsets resetados a 0");
+      break;
+  }
+}
+
 void imprimirDebug(uint16_t posicion, int error, int correccion, int velIzq, int velDer)
 {
   unsigned long ahora = millis();
@@ -155,6 +246,21 @@ void imprimirDebug(uint16_t posicion, int error, int correccion, int velIzq, int
 
 void loop()
 {
+  // Procesar comandos seriales para calibración
+  if(Serial.available())
+  {
+    char cmd = Serial.read();
+    procesarCalibracion(cmd);
+  }
+  
+  // En modo calibración: solo girar motores, no seguir línea
+  if(enModoCaliberacion)
+  {
+    // Avanzar recto para calibración
+    moverMotores(velocidadBase, velocidadBase);
+    return;
+  }
+  
   uint16_t posicion = qtr.readLineBlack(sensorValues);
   
   error = posicion - 3500;
