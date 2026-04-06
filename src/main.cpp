@@ -41,9 +41,21 @@ void setup()
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);  // LED indicador de inicio
 
-  // Cargar offsets desde EEPROM
-  offsetIzq = (int8_t)EEPROM.read(EEPROM_OFFSET_IZQ);
-  offsetDer = (int8_t)EEPROM.read(EEPROM_OFFSET_DER);
+  // PRIMERA VEZ: grabar offsets iniciales
+  // Derecha gira ~30% más → frenarla con offset negativo
+  int savedIzq = (int8_t)EEPROM.read(EEPROM_OFFSET_IZQ);
+  int savedDer = (int8_t)EEPROM.read(EEPROM_OFFSET_DER);
+  
+  // Si EEPROM está vacío (255) o sin calibrar, escribir valores iniciales
+  if (savedIzq == 255 || savedDer == 255) {
+    EEPROM.write(EEPROM_OFFSET_IZQ, (uint8_t)0);    // Izquierda = 100
+    EEPROM.write(EEPROM_OFFSET_DER, (uint8_t)(-25)); // Derecha = 75 (75*1.3 ≈ 100)
+    offsetIzq = 0;
+    offsetDer = -25;
+  } else {
+    offsetIzq = savedIzq;
+    offsetDer = savedDer;
+  }
 
   tiempoInicio = millis();
   
