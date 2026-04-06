@@ -1,228 +1,219 @@
 #include <Arduino.h>
-#include <QTRSensors.h>
-
-// ===================== SENSORES =====================
-
-#define NUM_SENSORS 8
-
-QTRSensors qtr;
-uint16_t sensorValues[NUM_SENSORS];
+#include <EEPROM.h>
 
 // ===================== MOTORES =====================
-
 #define ENA 5
 #define IN1 8
 #define IN2 9
-
 #define ENB 6
 #define IN3 10
 #define IN4 11
 
-// ===================== PARÁMETROS PID =====================
+// ===================== OFFSET (EEPROM) =====================
+int offsetIzq = 0;
+int offsetDer = 0;
+#define EEPROM_OFFSET_IZQ 0
+#define EEPROM_OFFSET_DER 1
 
-int velocidadBase = 200;  // Velocidad base
-int velocidadMax  = 255;
+// ===================== PARAMETROS =====================
+int velocidadBase = 200;
+int velocidadMax = 255;
+bool enModoCaliberacion = false;
 
-// PID AJUSTADO para curvas
-float Kp = 0.065;  // Control proporcional (aumentado para curvas)
-float Ki = 0.0003; // Control integral (recuperado)
-float Kd = 0.08;   // Control derivativo (aumentado)
-
-int  error         = 0;
-int  errorAnterior = 0;
-long integral      = 0;
-
-// ===================== DEBUG =====================
-#define DEBUG_MODO_SENSORES 0  // 1 = ON, 0 = OFF
-unsigned long ultimaImpresion = 0;
-const unsigned long INTERVALO_DEBUG = 200;
-
-// Prototipos de funciones
+// Prototipos
+void mostrarOffsets();
 void moverMotores(int velIzq, int velDer);
-void imprimirDebug(uint16_t posicion, int error, int correccion, int velIzq, int velDer);
+void detenerMotores();
+void procesarComando(char cmd);
 
 // ===================== SETUP =====================
-
 void setup()
 {
   Serial.begin(9600);
-
+  
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
-
   pinMode(ENB, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
 
-  // Activar emisor IR en Pin 7
-  pinMode(7, OUTPUT);
-  digitalWrite(7, HIGH);
+  // Cargar offsets desde EEPROM
+  offsetIzq = (int8_t)EEPROM.read(EEPROM_OFFSET_IZQ);
+  offsetDer = (int8_t)EEPROM.read(EEPROM_OFFSET_DER);
 
-  // Configuración QTR
-  qtr.setTypeRC();
-  qtr.setSensorPins((const uint8_t[]){A0, A1, A2, A3, A4, A5, 2, 3}, NUM_SENSORS);
-  qtr.setEmitterPin(7);
-
-  Serial.println("\n╔════════════════════════════════════╗");
-  Serial.println("║  LINE FOLLOWER - Iniciando...      ║");
-  Serial.println("╚════════════════════════════════════╝\n");
-
-  // Calibración mejorada
-  Serial.println("Calibrando sensores por 2.5 segundos...");
-  Serial.println("(Mueve el robot sobre blanco y negro)");
+  Serial.println("\n╔════════════════════════════════════════╗");
+  Serial.println("║  CALIBRACION DE MOTORES - OFFSETS     ║");
+  Serial.println("╚════════════════════════════════════════╝\n");
   
-  for (int i = 0; i < 250; i++)
-  {
-    qtr.calibrate();
-    delay(10);
-    if (i % 50 == 0) Serial.print(".");
-  }
+  mostrarOffsets();
   
-  Serial.println("\n✓ Calibración completada");
-  Serial.println("═════════════════════════════════════\n");
+  Serial.println("COMANDOS:");
+  Serial.println("  'C' -> Activar modo calibracion");
+  Serial.println("  'I' -> Aumentar offset izq (+1)");
+  Serial.println("  'J' -> Disminuir offset izq (-1)");
+  Serial.println("  'D' -> Aumentar offset der (+1)");
+  Serial.println("  'F' -> Disminuir offset der (-1)");
+  Serial.println("  'S' -> Guardar en EEPROM");
+  Serial.println("  'R' -> Reset offsets a 0\n");
   
-  // Lectura inicial para estabilizar
-  Serial.println("Estabilizando sensores...");
-  for (int i = 0; i < 20; i++)
-  {
-    qtr.readLineBlack(sensorValues);
-    delay(20);
-  }
-  
-  // Initializar PID con valores iniciales
-  error = 0;
-  errorAnterior = 0;
-  integral = 0;
-  
-  Serial.println("✓ Sistema listo\n");
   delay(1000);
 }
 
-// ===================== FUNCIONES =====================
+// ===================== MOSTRAR OFFSETS =====================
+void mostrarOffsets()
+{
+  Serial.println("\n┌─────────────────────────┐");
+  Serial.print("│ Izquierdo: ");
+  Serial.print(offsetIzq);
+  if(offsetIzq >= 0) Serial.print("  ");
+  Serial.println("│");
+  Serial.print("│ Derecho:   ");
+  Serial.print(offsetDer);
+  if(offsetDer >= 0) Serial.print("  ");
+  Serial.println("│");
+  Serial.println("└─────────────────────────┘\n");
+}
 
+// ===================== MOVER MOTORES =====================
 void moverMotores(int velIzq, int velDer)
 {
   velIzq = constrain(velIzq, -velocidadMax, velocidadMax);
   velDer = constrain(velDer, -velocidadMax, velocidadMax);
 
+  // Aplicar offsets
+  velIzq += offsetIzq;
+  velDer += offsetDer;
+
+  velIzq = constrain(velIzq, -velocidadMax, velocidadMax);
+  velDer = constrain(velDer, -velocidadMax, velocidadMax);
+
   // Motor izquierdo
-  if (velIzq >= 0)
-  {
+  if (velIzq >= 0) {
     digitalWrite(IN1, LOW);
     digitalWrite(IN2, HIGH);
-  }
-  else
-  {
+  } else {
     digitalWrite(IN1, HIGH);
     digitalWrite(IN2, LOW);
   }
   analogWrite(ENA, abs(velIzq));
 
-  // Motor derecho (INVERTIDO)
-  if (velDer >= 0)
-  {
+  // Motor derecho (invertido)
+  if (velDer >= 0) {
     digitalWrite(IN3, HIGH);
     digitalWrite(IN4, LOW);
-  }
-  else
-  {
+  } else {
     digitalWrite(IN3, LOW);
     digitalWrite(IN4, HIGH);
   }
   analogWrite(ENB, abs(velDer));
 }
 
-void imprimirDebug(uint16_t posicion, int error, int correccion, int velIzq, int velDer)
+void detenerMotores()
 {
-  unsigned long ahora = millis();
-  if (ahora - ultimaImpresion < INTERVALO_DEBUG) return;
-  ultimaImpresion = ahora;
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+}
 
-  Serial.print("POS:");
-  Serial.print(posicion);
-  Serial.print(" | ERR:");
-  Serial.print(error);
-  Serial.print(" | CORR:");
-  Serial.print(correccion);
-  Serial.print(" | VL:");
-  Serial.print(velIzq);
-  Serial.print(" VR:");
-  Serial.println(velDer);
+// ===================== PROCESAR COMANDOS =====================
+void procesarComando(char cmd)
+{
+  switch(cmd)
+  {
+    case 'C':
+    case 'c':
+      enModoCaliberacion = !enModoCaliberacion;
+      if(enModoCaliberacion) {
+        Serial.println("\n→ MODO CALIBRACION ACTIVADO");
+        Serial.println("→ Robot avanzara recto...\n");
+      } else {
+        Serial.println("\n→ Modo calibracion desactivado\n");
+        detenerMotores();
+      }
+      break;
+
+    case 'I':
+    case 'i':
+      offsetIzq++;
+      if(offsetIzq > 20) offsetIzq = 20;
+      Serial.print("Offset Izq: ");
+      Serial.println(offsetIzq);
+      break;
+
+    case 'J':
+    case 'j':
+      offsetIzq--;
+      if(offsetIzq < -20) offsetIzq = -20;
+      Serial.print("Offset Izq: ");
+      Serial.println(offsetIzq);
+      break;
+
+    case 'D':
+    case 'd':
+      offsetDer++;
+      if(offsetDer > 20) offsetDer = 20;
+      Serial.print("Offset Der: ");
+      Serial.println(offsetDer);
+      break;
+
+    case 'F':
+    case 'f':
+      offsetDer--;
+      if(offsetDer < -20) offsetDer = -20;
+      Serial.print("Offset Der: ");
+      Serial.println(offsetDer);
+      break;
+
+    case 'S':
+    case 's':
+      EEPROM.write(EEPROM_OFFSET_IZQ, (int8_t)offsetIzq);
+      EEPROM.write(EEPROM_OFFSET_DER, (int8_t)offsetDer);
+      Serial.println("\n✓ Offsets guardados en EEPROM");
+      mostrarOffsets();
+      detenerMotores();
+      enModoCaliberacion = false;
+      break;
+
+    case 'R':
+    case 'r':
+      offsetIzq = 0;
+      offsetDer = 0;
+      Serial.println("\n✓ Offsets resetados a 0");
+      mostrarOffsets();
+      break;
+
+    case '?':
+      Serial.println("\nCOMARDOS DISPONIBLES:");
+      Serial.println("  C -> Calibracion ON/OFF");
+      Serial.println("  I/J -> Offset izquierdo");
+      Serial.println("  D/F -> Offset derecho");
+      Serial.println("  S -> Guardar");
+      Serial.println("  R -> Reset\n");
+      break;
+  }
 }
 
 // ===================== LOOP =====================
-
 void loop()
 {
-  uint16_t posicion = qtr.readLineBlack(sensorValues);
-  
-  error = posicion - 3500;
-
-  // Detectar si hay línea (umbral mejorado)
-  bool lineaDetectada = false;
-  int sensorActivoCount = 0;
-  
-  for (int i = 0; i < NUM_SENSORS; i++)
+  // Procesar comandos seriales
+  if(Serial.available())
   {
-    if (sensorValues[i] > 400)  // Threshold aumentado (era 200)
-    {
-      lineaDetectada = true;
-      sensorActivoCount++;
+    char cmd = Serial.read();
+    if(cmd != '\n' && cmd != '\r') {
+      procesarComando(cmd);
     }
   }
 
-  if (DEBUG_MODO_SENSORES)
+  // En modo calibracion: avanzar recto
+  if(enModoCaliberacion)
   {
-    imprimirDebug(posicion, error, 0, 0, 0);
+    moverMotores(velocidadBase, velocidadBase);
+  }
+  else
+  {
+    detenerMotores();
   }
 
-  // Si no detecta línea → girar suavemente SIN MARCHA ATRÁS
-  if (!lineaDetectada || sensorActivoCount < 2)  // Requiere al menos 2 sensores
-  {
-    if (DEBUG_MODO_SENSORES) Serial.println("→ SIN LINEA - VIRANDO SUAVE");
-    
-    // Girar hacia donde estaba el error, pero sin marcha atrás
-    if (errorAnterior > 0)
-      moverMotores(120, 60);  // Gira a la derecha lentamente
-    else
-      moverMotores(60, 120);  // Gira a la izquierda lentamente
-    return;
-  }
-
-  // ═══════════════════ PID CONTROL ═══════════════════
-
-  // Integral con anti-windup
-  integral += error;
-  integral = constrain(integral, -600, 600);  // Rango ampliado para curvas
-
-  // Derivada
-  int derivada = error - errorAnterior;
-  
-  // Cálculo de corrección
-  int correccion = (Kp * error) + (Ki * integral) + (Kd * derivada);
-  correccion = constrain(correccion, -100, 100);  // Límite para curvas
-
-  errorAnterior = error;
-
-  // Velocidad adaptativa
-  int velocidadActual = velocidadBase;
-  
-  if (abs(error) < 200)        velocidadActual = 240;  // Recto
-  else if (abs(error) > 2000)  velocidadActual = 140;  // Curva cerrada
-  else                         velocidadActual = 190;  // Curva normal
-
-  int velIzq = velocidadActual + correccion;
-  int velDer = velocidadActual - correccion;
-
-  // Asegurar que nunca va hacia atrás (ambos motores siempre positivos)
-  velIzq = constrain(velIzq, 0, velocidadMax);
-  velDer = constrain(velDer, 0, velocidadMax);
-
-  moverMotores(velIzq, velDer);
-
-  if (DEBUG_MODO_SENSORES)
-  {
-    imprimirDebug(posicion, error, correccion, velIzq, velDer);
-  }
+  delay(50);
 }
