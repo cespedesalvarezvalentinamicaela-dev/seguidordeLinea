@@ -49,9 +49,9 @@ void setup()
   // Si EEPROM está vacío (255) o sin calibrar, escribir valores iniciales
   if (savedIzq == 255 || savedDer == 255) {
     EEPROM.write(EEPROM_OFFSET_IZQ, (uint8_t)0);    // Izquierda = 100
-    EEPROM.write(EEPROM_OFFSET_DER, (uint8_t)(-35)); // Derecha = 65 (ajuste para ~10% restante)
+    EEPROM.write(EEPROM_OFFSET_DER, (uint8_t)(-40)); // Derecha = 60 (ajuste para ~8% restante)
     offsetIzq = 0;
-    offsetDer = -35;
+    offsetDer = -40;
   } else {
     offsetIzq = savedIzq;
     offsetDer = savedDer;
