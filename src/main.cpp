@@ -9,6 +9,9 @@
 #define IN3 10
 #define IN4 11
 
+// ===================== LED (opcional) =====================
+#define LED_PIN 13
+
 // ===================== OFFSET (EEPROM) =====================
 int offsetIzq = 0;
 int offsetDer = 0;
@@ -16,63 +19,36 @@ int offsetDer = 0;
 #define EEPROM_OFFSET_DER 1
 
 // ===================== PARAMETROS =====================
-int velocidadBase = 200;
+int velocidadBase = 180;
 int velocidadMax = 255;
-bool enModoCaliberacion = false;
 
-// Prototipos
-void mostrarOffsets();
-void moverMotores(int velIzq, int velDer);
-void detenerMotores();
-void procesarComando(char cmd);
+// ESTADOS
+unsigned long tiempoInicio = 0;
+const int ESPERA_INICIAL = 3000;  // 3 segundos de espera
+const int DURACION_MOVIMIENTO = 5000; // 5 segundos de movimiento
+bool yaMovio = false;
 
 // ===================== SETUP =====================
 void setup()
 {
-  Serial.begin(9600);
-  
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
   pinMode(ENB, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
+  
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH);  // LED indicador de inicio
 
   // Cargar offsets desde EEPROM
   offsetIzq = (int8_t)EEPROM.read(EEPROM_OFFSET_IZQ);
   offsetDer = (int8_t)EEPROM.read(EEPROM_OFFSET_DER);
 
-  Serial.println("\n╔════════════════════════════════════════╗");
-  Serial.println("║  CALIBRACION DE MOTORES - OFFSETS     ║");
-  Serial.println("╚════════════════════════════════════════╝\n");
+  tiempoInicio = millis();
   
-  mostrarOffsets();
-  
-  Serial.println("COMANDOS:");
-  Serial.println("  'C' -> Activar modo calibracion");
-  Serial.println("  'I' -> Aumentar offset izq (+1)");
-  Serial.println("  'J' -> Disminuir offset izq (-1)");
-  Serial.println("  'D' -> Aumentar offset der (+1)");
-  Serial.println("  'F' -> Disminuir offset der (-1)");
-  Serial.println("  'S' -> Guardar en EEPROM");
-  Serial.println("  'R' -> Reset offsets a 0\n");
-  
-  delay(1000);
-}
-
-// ===================== MOSTRAR OFFSETS =====================
-void mostrarOffsets()
-{
-  Serial.println("\n┌─────────────────────────┐");
-  Serial.print("│ Izquierdo: ");
-  Serial.print(offsetIzq);
-  if(offsetIzq >= 0) Serial.print("  ");
-  Serial.println("│");
-  Serial.print("│ Derecho:   ");
-  Serial.print(offsetDer);
-  if(offsetDer >= 0) Serial.print("  ");
-  Serial.println("│");
-  Serial.println("└─────────────────────────┘\n");
+  // Espera inicial: LED parpadeante
+  delay(500);
 }
 
 // ===================== MOVER MOTORES =====================
@@ -115,105 +91,36 @@ void detenerMotores()
   analogWrite(ENB, 0);
 }
 
-// ===================== PROCESAR COMANDOS =====================
-void procesarComando(char cmd)
-{
-  switch(cmd)
-  {
-    case 'C':
-    case 'c':
-      enModoCaliberacion = !enModoCaliberacion;
-      if(enModoCaliberacion) {
-        Serial.println("\n→ MODO CALIBRACION ACTIVADO");
-        Serial.println("→ Robot avanzara recto...\n");
-      } else {
-        Serial.println("\n→ Modo calibracion desactivado\n");
-        detenerMotores();
-      }
-      break;
-
-    case 'I':
-    case 'i':
-      offsetIzq++;
-      if(offsetIzq > 20) offsetIzq = 20;
-      Serial.print("Offset Izq: ");
-      Serial.println(offsetIzq);
-      break;
-
-    case 'J':
-    case 'j':
-      offsetIzq--;
-      if(offsetIzq < -20) offsetIzq = -20;
-      Serial.print("Offset Izq: ");
-      Serial.println(offsetIzq);
-      break;
-
-    case 'D':
-    case 'd':
-      offsetDer++;
-      if(offsetDer > 20) offsetDer = 20;
-      Serial.print("Offset Der: ");
-      Serial.println(offsetDer);
-      break;
-
-    case 'F':
-    case 'f':
-      offsetDer--;
-      if(offsetDer < -20) offsetDer = -20;
-      Serial.print("Offset Der: ");
-      Serial.println(offsetDer);
-      break;
-
-    case 'S':
-    case 's':
-      EEPROM.write(EEPROM_OFFSET_IZQ, (int8_t)offsetIzq);
-      EEPROM.write(EEPROM_OFFSET_DER, (int8_t)offsetDer);
-      Serial.println("\n✓ Offsets guardados en EEPROM");
-      mostrarOffsets();
-      detenerMotores();
-      enModoCaliberacion = false;
-      break;
-
-    case 'R':
-    case 'r':
-      offsetIzq = 0;
-      offsetDer = 0;
-      Serial.println("\n✓ Offsets resetados a 0");
-      mostrarOffsets();
-      break;
-
-    case '?':
-      Serial.println("\nCOMARDOS DISPONIBLES:");
-      Serial.println("  C -> Calibracion ON/OFF");
-      Serial.println("  I/J -> Offset izquierdo");
-      Serial.println("  D/F -> Offset derecho");
-      Serial.println("  S -> Guardar");
-      Serial.println("  R -> Reset\n");
-      break;
-  }
-}
-
 // ===================== LOOP =====================
 void loop()
 {
-  // Procesar comandos seriales
-  if(Serial.available())
-  {
-    char cmd = Serial.read();
-    if(cmd != '\n' && cmd != '\r') {
-      procesarComando(cmd);
-    }
-  }
+  unsigned long ahora = millis();
+  unsigned long tiempoTranscurrido = ahora - tiempoInicio;
 
-  // En modo calibracion: avanzar recto
-  if(enModoCaliberacion)
-  {
-    moverMotores(velocidadBase, velocidadBase);
-  }
-  else
-  {
+  // FASE 1: Espera inicial (3 segundos)
+  if (tiempoTranscurrido < ESPERA_INICIAL) {
     detenerMotores();
+    
+    // Parpadeo del LED cada 500ms
+    if ((tiempoTranscurrido / 500) % 2 == 0) {
+      digitalWrite(LED_PIN, HIGH);
+    } else {
+      digitalWrite(LED_PIN, LOW);
+    }
+    return;
   }
 
-  delay(50);
+  // FASE 2: Movimiento (5 segundos)
+  if (tiempoTranscurrido < (ESPERA_INICIAL + DURACION_MOVIMIENTO)) {
+    digitalWrite(LED_PIN, HIGH);  // LED fijo durante movimiento
+    moverMotores(velocidadBase, velocidadBase);
+    yaMovio = true;
+    return;
+  }
+
+  // FASE 3: Parado
+  if (yaMovio) {
+    detenerMotores();
+    digitalWrite(LED_PIN, LOW);
+  }
 }
