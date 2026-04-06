@@ -1,0 +1,2 @@
+// Este es el código de diagnóstico guardado como respaldo
+// Si necesitas volver a diagnosticar, copia este contenido a main.cpp
