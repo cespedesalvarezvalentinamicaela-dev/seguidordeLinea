@@ -19,13 +19,13 @@ int offsetDer = 0;
 #define EEPROM_OFFSET_DER 1
 
 // ===================== PARAMETROS =====================
-int velocidadBase = 180;
+int velocidadBase = 100;  // REDUCIDO para observar mejor
 int velocidadMax = 255;
 
 // ESTADOS
 unsigned long tiempoInicio = 0;
 const int ESPERA_INICIAL = 3000;  // 3 segundos de espera
-const int DURACION_MOVIMIENTO = 5000; // 5 segundos de movimiento
+const int DURACION_MOVIMIENTO = 15000; // 15 segundos de movimiento (AUMENTADO para observar)
 bool yaMovio = false;
 
 // ===================== SETUP =====================
