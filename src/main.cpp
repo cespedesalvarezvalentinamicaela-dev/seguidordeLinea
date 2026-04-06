@@ -1,194 +1,126 @@
 #include <Arduino.h>
-#include <QTRSensors.h>
 #include <EEPROM.h>
 
-// ===================== SENSORES =====================
-
-#define NUM_SENSORS 8
-
-QTRSensors qtr;
-uint16_t sensorValues[NUM_SENSORS];
-
 // ===================== MOTORES =====================
-
 #define ENA 5
 #define IN1 8
 #define IN2 9
-
 #define ENB 6
 #define IN3 10
 #define IN4 11
 
-// ===================== PARAMETROS PID =====================
+// ===================== LED (opcional) =====================
+#define LED_PIN 13
 
-int velocidadBase = 200;  // Velocidad base
-int velocidadMax  = 255;
-
-// OFFSET DE MOTORES (cargados desde EEPROM)
+// ===================== OFFSET (EEPROM) =====================
 int offsetIzq = 0;
 int offsetDer = 0;
 #define EEPROM_OFFSET_IZQ 0
 #define EEPROM_OFFSET_DER 1
 
-// PID AJUSTADO
-float Kp = 0.065;  // Control proporcional
-float Ki = 0.0003; // Control integral
-float Kd = 0.08;   // Control derivativo
+// ===================== PARAMETROS =====================
+int velocidadBase = 180;
+int velocidadMax = 255;
 
-int  error         = 0;
-int  errorAnterior = 0;
-long integral      = 0;
+// ESTADOS
+unsigned long tiempoInicio = 0;
+const int ESPERA_INICIAL = 3000;  // 3 segundos de espera
+const int DURACION_MOVIMIENTO = 5000; // 5 segundos de movimiento
+bool yaMovio = false;
 
 // ===================== SETUP =====================
-
 void setup()
 {
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
-
   pinMode(ENB, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
-
-  // Activar emisor IR en Pin 7
-  pinMode(7, OUTPUT);
-  digitalWrite(7, HIGH);
-
-  // Configuracion QTR
-  qtr.setTypeRC();
-  qtr.setSensorPins((const uint8_t[]){A0, A1, A2, A3, A4, A5, 2, 3}, NUM_SENSORS);
-  qtr.setEmitterPin(7);
-
-  // Calibracion de sensores (2.5 segundos)
-  for (int i = 0; i < 250; i++)
-  {
-    qtr.calibrate();
-    delay(10);
-  }
   
-  // Lectura inicial para estabilizar
-  for (int i = 0; i < 20; i++)
-  {
-    qtr.readLineBlack(sensorValues);
-    delay(20);
-  }
-  
-  // Initializar PID
-  error = 0;
-  errorAnterior = 0;
-  integral = 0;
-  
-  // Cargar offsets de EEPROM automaticamente
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH);  // LED indicador de inicio
+
+  // Cargar offsets desde EEPROM
   offsetIzq = (int8_t)EEPROM.read(EEPROM_OFFSET_IZQ);
   offsetDer = (int8_t)EEPROM.read(EEPROM_OFFSET_DER);
+
+  tiempoInicio = millis();
   
-  // Esperar 1 segundo antes de iniciar
-  delay(1000);
+  // Espera inicial: LED parpadeante
+  delay(500);
 }
 
-// ===================== FUNCIONES =====================
-
+// ===================== MOVER MOTORES =====================
 void moverMotores(int velIzq, int velDer)
 {
   velIzq = constrain(velIzq, -velocidadMax, velocidadMax);
   velDer = constrain(velDer, -velocidadMax, velocidadMax);
-  
-  // Aplicar offsets de calibration
+
+  // Aplicar offsets
   velIzq += offsetIzq;
   velDer += offsetDer;
-  
-  // Recalcular constrain despues de offsets
+
   velIzq = constrain(velIzq, -velocidadMax, velocidadMax);
   velDer = constrain(velDer, -velocidadMax, velocidadMax);
 
   // Motor izquierdo
-  if (velIzq >= 0)
-  {
+  if (velIzq >= 0) {
     digitalWrite(IN1, LOW);
     digitalWrite(IN2, HIGH);
-  }
-  else
-  {
+  } else {
     digitalWrite(IN1, HIGH);
     digitalWrite(IN2, LOW);
   }
   analogWrite(ENA, abs(velIzq));
 
-  // Motor derecho (INVERTIDO)
-  if (velDer >= 0)
-  {
+  // Motor derecho (invertido)
+  if (velDer >= 0) {
     digitalWrite(IN3, HIGH);
     digitalWrite(IN4, LOW);
-  }
-  else
-  {
+  } else {
     digitalWrite(IN3, LOW);
     digitalWrite(IN4, HIGH);
   }
   analogWrite(ENB, abs(velDer));
 }
 
-// ===================== LOOP =====================
+void detenerMotores()
+{
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+}
 
+// ===================== LOOP =====================
 void loop()
 {
-  uint16_t posicion = qtr.readLineBlack(sensorValues);
-  
-  error = posicion - 3500;
+  unsigned long ahora = millis();
+  unsigned long tiempoTranscurrido = ahora - tiempoInicio;
 
-  // Detectar si hay linea
-  bool lineaDetectada = false;
-  int sensorActivoCount = 0;
-  
-  for (int i = 0; i < NUM_SENSORS; i++)
-  {
-    if (sensorValues[i] > 400)
-    {
-      lineaDetectada = true;
-      sensorActivoCount++;
+  // FASE 1: Espera inicial (3 segundos)
+  if (tiempoTranscurrido < ESPERA_INICIAL) {
+    detenerMotores();
+    
+    // Parpadeo del LED cada 500ms
+    if ((tiempoTranscurrido / 500) % 2 == 0) {
+      digitalWrite(LED_PIN, HIGH);
+    } else {
+      digitalWrite(LED_PIN, LOW);
     }
-  }
-
-  // Si no detecta linea -> girar suavemente SIN MARCHA ATRAS
-  if (!lineaDetectada || sensorActivoCount < 2)
-  {
-    // Girar toward donde estaba el error, pero sin marcha atras
-    if (errorAnterior > 0)
-      moverMotores(120, 60);  // Gira a la derecha lentamente
-    else
-      moverMotores(60, 120);  // Gira a la izquierda lentamente
     return;
   }
 
-  // ============ PID CONTROL ============
+  // FASE 2: Movimiento (5 segundos)
+  if (tiempoTranscurrido < (ESPERA_INICIAL + DURACION_MOVIMIENTO)) {
+    digitalWrite(LED_PIN, HIGH);  // LED fijo durante movimiento
+    moverMotores(velocidadBase, velocidadBase);
+    yaMovio = true;
+    return;
+  }
 
-  // Integral con anti-windup FUERTE
-  integral += error;
-  integral = constrain(integral, -600, 600);
-
-  // Derivada
-  int derivada = error - errorAnterior;
-  
-  // Calculo de correccion
-  int correccion = (Kp * error) + (Ki * integral) + (Kd * derivada);
-  correccion = constrain(correccion, -100, 100);
-
-  errorAnterior = error;
-
-  // Velocidad adaptativa
-  int velocidadActual = velocidadBase;
-  
-  if (abs(error) < 200)        velocidadActual = 240;  // Recto
-  else if (abs(error) > 2000)  velocidadActual = 140;  // Curva cerrada
-  else                         velocidadActual = 190;  // Curva normal
-
-  int velIzq = velocidadActual + correccion;
-  int velDer = velocidadActual - correccion;
-
-  // Asegurar que nunca va hacia atras
-  velIzq = constrain(velIzq, 0, velocidadMax);
-  velDer = constrain(velDer, 0, velocidadMax);
-
-  moverMotores(velIzq, velDer);
+  // FASE 3: Parado
+  if (yaMovio) {
+    detenerMotores();
+    digitalWrite(LED_PIN, LOW);
+  }
 }
