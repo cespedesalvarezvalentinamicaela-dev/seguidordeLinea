@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <QTRSensors.h>
+#include <EEPROM.h>
 
 // ===================== SENSORES =====================
 
@@ -17,6 +18,12 @@ uint16_t sensorValues[NUM_SENSORS];
 #define ENB 6
 #define IN3 10
 #define IN4 11
+
+// ===================== OFFSET (CALIBRACIÓN) =====================
+int offsetIzq = 0;
+int offsetDer = 0;
+#define EEPROM_OFFSET_IZQ 0
+#define EEPROM_OFFSET_DER 1
 
 // ===================== PARÁMETROS PID =====================
 
@@ -46,6 +53,14 @@ void imprimirDebug(uint16_t posicion, int error, int correccion, int velIzq, int
 void setup()
 {
   Serial.begin(9600);
+
+  // Cargar offsets desde EEPROM (calibracion previa)
+  offsetIzq = (int8_t)EEPROM.read(EEPROM_OFFSET_IZQ);
+  offsetDer = (int8_t)EEPROM.read(EEPROM_OFFSET_DER);
+  
+  // Si no hay calibracion previa, usar valores por defecto
+  if (offsetIzq == 255) offsetIzq = 5;      // Izq: +5
+  if (offsetDer == 255) offsetDer = -45;    // Der: -45
 
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
@@ -103,6 +118,14 @@ void setup()
 
 void moverMotores(int velIzq, int velDer)
 {
+  velIzq = constrain(velIzq, -velocidadMax, velocidadMax);
+  velDer = constrain(velDer, -velocidadMax, velocidadMax);
+
+  // APLICAR OFFSETS DE CALIBRACIÓN
+  velIzq += offsetIzq;
+  velDer += offsetDer;
+
+  // Re-constrain después de aplicar offsets
   velIzq = constrain(velIzq, -velocidadMax, velocidadMax);
   velDer = constrain(velDer, -velocidadMax, velocidadMax);
 
