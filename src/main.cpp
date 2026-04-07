@@ -30,10 +30,10 @@ int offsetDer = 0;
 int velocidadBase = 200;  // Velocidad base
 int velocidadMax  = 255;
 
-// PID AJUSTADO para curvas
-float Kp = 0.065;  // Control proporcional (aumentado para curvas)
-float Ki = 0.0003; // Control integral (recuperado)
-float Kd = 0.08;   // Control derivativo (aumentado)
+// PID AJUSTADO para curvas MEJORADO
+float Kp = 0.12;   // Control proporcional (AUMENTADO para detectar cambios rápido)
+float Ki = 0.0003; // Control integral (mantener)
+float Kd = 0.12;   // Control derivativo (AUMENTADO para suavizar correcciones)
 
 int  error         = 0;
 int  errorAnterior = 0;
