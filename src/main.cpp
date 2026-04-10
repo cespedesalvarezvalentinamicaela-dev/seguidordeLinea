@@ -298,7 +298,7 @@ input[type=range]{flex:1;accent-color:#0f0;height:6px}
 let vt;
 (function(){
   let l='',b='';
-  for(let i=1;i<=8;i++){
+  for(let i=8;i>=1;i--){
     l+='<div class="lbl">S'+i+'</div>';
     b+='<div class="s" id="s'+i+'" style="height:2px"></div>';
   }
@@ -355,7 +355,7 @@ function tick(){
       let err=d.pos-3500;
       document.getElementById('pos').innerHTML=
         'POS: '+d.pos+' &nbsp; ERR: <span class="err">'+(err>=0?'+':'')+err+'</span>';
-      let pct=Math.max(2,Math.min(96,d.pos/7000*100));
+      let pct=Math.max(2,Math.min(96,100-d.pos/7000*100));
       document.getElementById('dot').style.left=pct+'%';
     }
 
