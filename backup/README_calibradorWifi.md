@@ -75,6 +75,10 @@ Muestra en tiempo real:
 - **ERR**: error respecto al centro (negativo=línea a la izquierda, positivo=a la derecha)
 - **Punto deslizante**: posición visual de la línea en el array
 
+> **Orientación física**: S8 está a la izquierda y S1 a la derecha del robot.
+> Las barras y el punto deslizante respetan esta orientación — lo que ves en pantalla
+> corresponde directamente a lo que ves mirando el robot desde arriba.
+
 ### Controles
 
 | Botón / Control | Acción |
