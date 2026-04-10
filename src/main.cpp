@@ -134,7 +134,33 @@ void ejecutarComando(String cmd)
   else if (cmd == "R+") { offsetDer = constrain(offsetDer + 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
   else if (cmd == "R-") { offsetDer = constrain(offsetDer - 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
   else if (cmd == "RESET_OFF") { offsetIzq = 0; offsetDer = 0; if (motorOn) moverMotores(velocidad, velocidad); }
-  else if (cmd == "STEP_FWD")  { moverMotores( velocidad,  velocidad); delay(pasoMs); detener(); }
+  else if (cmd == "STEP_FWD")
+  {
+    if (pidOn && calibrado)
+    {
+      // un paso controlado por PID
+      unsigned long fin = millis() + pasoMs;
+      while (millis() < fin)
+      {
+        posActual    = qtr.readLineBlack(sensorValues);
+        pidError     = (int)posActual - 3500;
+        pidIntegral += pidError;
+        pidIntegral  = constrain(pidIntegral, -600, 600);
+        int der      = pidError - pidErrorAnt;
+        pidCorr      = constrain((int)(Kp*pidError + Ki*pidIntegral + Kd*der), -150, 150);
+        pidErrorAnt  = pidError;
+        int velBase  = (abs(pidError) < 200) ? velocidad
+                     : (abs(pidError) > 2000) ? max(80, velocidad-80)
+                     :                          max(80, velocidad-40);
+        pidVelIzq = constrain(velBase + pidCorr, 0, VEL_MAX);
+        pidVelDer = constrain(velBase - pidCorr, 0, VEL_MAX);
+        moverMotores(pidVelIzq, pidVelDer);
+        server.handleClient();
+      }
+      detener();
+    }
+    else { moverMotores(velocidad, velocidad); delay(pasoMs); detener(); }
+  }
   else if (cmd == "STEP_BACK") { moverMotores(-velocidad, -velocidad); delay(pasoMs); detener(); }
   else if (cmd == "STEP_LEFT") { moverMotores( velocidad, -velocidad); delay(pasoMs); detener(); }
   else if (cmd == "STEP_RIGHT"){ moverMotores(-velocidad,  velocidad); delay(pasoMs); detener(); }
@@ -477,37 +503,4 @@ void loop()
     ejecutarComando(cmd);
   }
 
-  if (pidOn && calibrado)
-  {
-    posActual = qtr.readLineBlack(sensorValues);
-    pidError  = (int)posActual - 3500;
-
-    // sin linea: girar hacia el ultimo lado conocido
-    bool lineaDetectada = false;
-    for (int i = 0; i < NUM_SENSORS; i++)
-      if (sensorValues[i] > 500) { lineaDetectada = true; break; }
-
-    if (!lineaDetectada)
-    {
-      if (pidErrorAnt > 0) moverMotores( velocidad/2, -velocidad/2);
-      else                 moverMotores(-velocidad/2,  velocidad/2);
-      return;
-    }
-
-    pidIntegral += pidError;
-    pidIntegral  = constrain(pidIntegral, -600, 600);
-
-    int derivada = pidError - pidErrorAnt;
-    pidCorr      = (int)(Kp * pidError + Ki * pidIntegral + Kd * derivada);
-    pidCorr      = constrain(pidCorr, -150, 150);
-    pidErrorAnt  = pidError;
-
-    int velBase = (abs(pidError) < 200) ? velocidad
-                : (abs(pidError) > 2000) ? max(80, velocidad - 80)
-                :                          max(80, velocidad - 40);
-
-    pidVelIzq = constrain(velBase + pidCorr, 0, VEL_MAX);
-    pidVelDer = constrain(velBase - pidCorr, 0, VEL_MAX);
-    moverMotores(pidVelIzq, pidVelDer);
-  }
 }
