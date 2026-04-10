@@ -1,251 +1,347 @@
 #include <Arduino.h>
 #include <QTRSensors.h>
-#include <EEPROM.h>
 
 // ===================== SENSORES =====================
 
 #define NUM_SENSORS 8
-
 QTRSensors qtr;
 uint16_t sensorValues[NUM_SENSORS];
+#define PIN_EMISOR_IR 2
 
 // ===================== MOTORES =====================
 
-#define ENA 5
-#define IN1 8
-#define IN2 9
+#define ENA  23
+#define IN1  22
+#define IN2  21
+#define ENB  19
+#define IN3  18
+#define IN4   5
+#define VEL_MAX 255
 
-#define ENB 6
-#define IN3 10
-#define IN4 11
+// LEDC PWM
+#define LEDC_FREQ      5000
+#define LEDC_RES       8
+#define LEDC_CANAL_IZQ 0
+#define LEDC_CANAL_DER 1
 
-// ===================== OFFSET (CALIBRACIÓN) =====================
-int offsetIzq = 0;
-int offsetDer = 0;
-#define EEPROM_OFFSET_IZQ 0
-#define EEPROM_OFFSET_DER 1
+// ===================== ESTADO =====================
 
-// ===================== PARÁMETROS PID =====================
-
-int velocidadBase = 200;  // Velocidad base
-int velocidadMax  = 255;
-
-// PID AJUSTADO para curvas MEJORADO
-float Kp = 0.12;   // Control proporcional (AUMENTADO para detectar cambios rápido)
-float Ki = 0.0003; // Control integral (mantener)
-float Kd = 0.12;   // Control derivativo (AUMENTADO para suavizar correcciones)
-
-int  error         = 0;
-int  errorAnterior = 0;
-long integral      = 0;
-
-// ===================== DEBUG =====================
-#define DEBUG_MODO_SENSORES 0  // 1 = ON, 0 = OFF
+bool  sensorOn  = false;
+bool  calibrado = false;
+bool  motorOn   = false;
 unsigned long ultimaImpresion = 0;
-const unsigned long INTERVALO_DEBUG = 200;
+int   intervaloMs = 300;
+int   velocidad   = 150;
+int   offsetIzq   = 0;
+int   offsetDer   = 0;
 
-// Prototipos de funciones
-void moverMotores(int velIzq, int velDer);
-void imprimirDebug(uint16_t posicion, int error, int correccion, int velIzq, int velDer);
+// ===================== MOTORES =====================
+
+void moverMotores(int velIzq, int velDer)
+{
+  velIzq = constrain(velIzq + offsetIzq, -VEL_MAX, VEL_MAX);
+  velDer = constrain(velDer + offsetDer, -VEL_MAX, VEL_MAX);
+
+  if (velIzq >= 0) { digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);  }
+  else             { digitalWrite(IN1, LOW);  digitalWrite(IN2, HIGH); }
+  ledcWrite(LEDC_CANAL_IZQ, abs(velIzq));
+
+  if (velDer >= 0) { digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);  }
+  else             { digitalWrite(IN3, LOW);  digitalWrite(IN4, HIGH); }
+  ledcWrite(LEDC_CANAL_DER, abs(velDer));
+
+  motorOn = true;
+}
+
+void detener()
+{
+  ledcWrite(LEDC_CANAL_IZQ, 0);
+  ledcWrite(LEDC_CANAL_DER, 0);
+  motorOn = false;
+}
+
+// ===================== SENSORES =====================
+
+void imprimirBarras(uint16_t valores[], uint16_t umbral)
+{
+  Serial.print(F("  ["));
+  for (int i = 0; i < NUM_SENSORS; i++)
+  {
+    Serial.print(valores[i] > umbral ? F("##") : F(".."));
+    if (i < NUM_SENSORS - 1) Serial.print(F("|"));
+  }
+  Serial.println(F("]"));
+}
+
+void mostrarLive()
+{
+  if (calibrado)
+  {
+    uint16_t posicion = qtr.readLineBlack(sensorValues);
+    int err = (int)posicion - 3500;
+    Serial.println(F("══════════════════════════════════════════════"));
+    Serial.print(F("  POS: ")); Serial.print(posicion);
+    Serial.print(F("  ERR: "));
+    if (err >= 0) Serial.print(F("+"));
+    Serial.println(err);
+    Serial.print(F("  "));
+    for (int i = 0; i < NUM_SENSORS; i++)
+    {
+      if (sensorValues[i] < 100) Serial.print(F(" "));
+      if (sensorValues[i] < 10)  Serial.print(F(" "));
+      Serial.print(sensorValues[i]);
+      if (i < NUM_SENSORS - 1) Serial.print(F(" | "));
+    }
+    Serial.println();
+    imprimirBarras(sensorValues, 400);
+  }
+  else
+  {
+    qtr.read(sensorValues);
+    Serial.println(F("══════════════════════════════════════════════"));
+    Serial.println(F("  [SIN CALIBRAR]"));
+    Serial.print(F("  "));
+    for (int i = 0; i < NUM_SENSORS; i++)
+    {
+      Serial.print(sensorValues[i]);
+      if (i < NUM_SENSORS - 1) Serial.print(F("|"));
+    }
+    Serial.println();
+    imprimirBarras(sensorValues, 500);
+  }
+
+  // Estado motores
+  int vi = constrain(velocidad + offsetIzq, 0, VEL_MAX);
+  int vd = constrain(velocidad + offsetDer, 0, VEL_MAX);
+  Serial.print(F("  M: ")); Serial.print(motorOn ? F("ON ") : F("OFF"));
+  Serial.print(F("  V:")); Serial.print(velocidad);
+  Serial.print(F("  IZQ:")); Serial.print(offsetIzq); Serial.print(F("->")); Serial.print(vi);
+  Serial.print(F("  DER:")); Serial.print(offsetDer); Serial.print(F("->")); Serial.println(vd);
+  Serial.println(F("══════════════════════════════════════════════"));
+}
+
+void mostrarSensores()
+{
+  if (calibrado)
+  {
+    uint16_t posicion = qtr.readLineBlack(sensorValues);
+    Serial.println(F("─────────────────────────────────────────────"));
+    Serial.print(F("  POS: ")); Serial.print(posicion);
+    Serial.print(F("  ERR: ")); Serial.println((int)posicion - 3500);
+    Serial.print(F("  "));
+    for (int i = 0; i < NUM_SENSORS; i++)
+    {
+      if (sensorValues[i] < 100) Serial.print(F(" "));
+      if (sensorValues[i] < 10)  Serial.print(F(" "));
+      Serial.print(sensorValues[i]);
+      if (i < NUM_SENSORS - 1) Serial.print(F(" | "));
+    }
+    Serial.println();
+    imprimirBarras(sensorValues, 400);
+  }
+  else
+  {
+    qtr.read(sensorValues);
+    Serial.println(F("─────────────────────────────────────────────"));
+    Serial.println(F("  [SIN CALIBRAR] Valores RAW:"));
+    Serial.print(F("  "));
+    for (int i = 0; i < NUM_SENSORS; i++)
+    {
+      Serial.print(sensorValues[i]);
+      if (i < NUM_SENSORS - 1) Serial.print(F("|"));
+    }
+    Serial.println();
+    imprimirBarras(sensorValues, 500);
+  }
+}
+
+void calibrarSensores()
+{
+  bool motoresEstaban = motorOn;
+  if (motorOn) detener();
+
+  Serial.println(F("\n>> Calibrando (3s)... mueve sobre la linea y el fondo."));
+  for (int i = 0; i < 300; i++)
+  {
+    qtr.calibrate();
+    delay(10);
+    if (i % 60 == 0)
+    {
+      Serial.print(F("   "));
+      for (int j = 0; j < i / 30; j++) Serial.print(F("="));
+      Serial.print(F("> "));
+      Serial.print(i / 3);
+      Serial.println(F("%"));
+    }
+  }
+  calibrado = true;
+  Serial.println(F("   100%  >> Completada.\n"));
+  Serial.print(F("  Min: "));
+  for (int i = 0; i < NUM_SENSORS; i++) { Serial.print(qtr.calibrationOn.minimum[i]); if (i < NUM_SENSORS - 1) Serial.print(F("|")); }
+  Serial.println();
+  Serial.print(F("  Max: "));
+  for (int i = 0; i < NUM_SENSORS; i++) { Serial.print(qtr.calibrationOn.maximum[i]); if (i < NUM_SENSORS - 1) Serial.print(F("|")); }
+  Serial.println();
+
+  if (motoresEstaban) moverMotores(velocidad, velocidad);
+}
+
+// ===================== TEST MOTORES =====================
+
+void testMotores()
+{
+  Serial.println(F("\n>> TEST MOTORES:"));
+  Serial.println(F("   Adelante 2s..."));
+  moverMotores(velocidad, velocidad);
+  delay(2000);
+
+  Serial.println(F("   Stop 1s..."));
+  detener();
+  delay(1000);
+
+  Serial.println(F("   Atras 2s..."));
+  moverMotores(-velocidad, -velocidad);
+  delay(2000);
+
+  Serial.println(F("   Stop 1s..."));
+  detener();
+  delay(1000);
+
+  Serial.println(F("   Giro izquierda 1s..."));
+  moverMotores(velocidad/2, velocidad);
+  delay(1000);
+
+  Serial.println(F("   Giro derecha 1s..."));
+  moverMotores(velocidad, velocidad/2);
+  delay(1000);
+
+  detener();
+  Serial.println(F(">> Test completado.\n"));
+}
+
+// ===================== AYUDA =====================
+
+void imprimirAyuda()
+{
+  Serial.println(F("\n╔════════════════════════════════════════════╗"));
+  Serial.println(F("║   TESTING ESPduino-32 - SENSORES + MOTORES ║"));
+  Serial.println(F("╠════════════════════════════════════════════╣"));
+  Serial.println(F("║  --- SENSORES ---                          ║"));
+  Serial.println(F("║  CAL          Calibrar sensores (3s)       ║"));
+  Serial.println(F("║  READ         Lectura unica sensores       ║"));
+  Serial.println(F("║  START        Lectura continua sensores    ║"));
+  Serial.println(F("║  LIVE         Sensores + estado motores    ║"));
+  Serial.println(F("║  PAUSE        Pausa display continuo       ║"));
+  Serial.println(F("║  INT <ms>     Intervalo display (def 300)  ║"));
+  Serial.println(F("╠════════════════════════════════════════════╣"));
+  Serial.println(F("║  --- MOTORES ---                           ║"));
+  Serial.println(F("║  TEST         Secuencia automatica motores ║"));
+  Serial.println(F("║  GO           Adelante con vel actual      ║"));
+  Serial.println(F("║  BACK         Atras con vel actual         ║"));
+  Serial.println(F("║  MSTOP        Para motores                 ║"));
+  Serial.println(F("║  L+  L-       Offset izq +5 / -5          ║"));
+  Serial.println(F("║  R+  R-       Offset der +5 / -5          ║"));
+  Serial.println(F("║  V <n>        Velocidad (0-255, def 150)   ║"));
+  Serial.println(F("╠════════════════════════════════════════════╣"));
+  Serial.println(F("║  STOP   Para todo  | HELP  Esta ayuda      ║"));
+  Serial.println(F("╚════════════════════════════════════════════╝\n"));
+}
+
+void imprimirEstado()
+{
+  int vi = constrain(velocidad + offsetIzq, 0, VEL_MAX);
+  int vd = constrain(velocidad + offsetDer, 0, VEL_MAX);
+  Serial.println(F("─────────────────────────────────────────────"));
+  Serial.print(F("  Calibrado : ")); Serial.println(calibrado ? "SI" : "NO");
+  Serial.print(F("  Motores   : ")); Serial.println(motorOn   ? "ON" : "OFF");
+  Serial.print(F("  Velocidad : ")); Serial.println(velocidad);
+  Serial.print(F("  Offset IZQ: ")); Serial.print(offsetIzq); Serial.print(F(" -> ")); Serial.println(vi);
+  Serial.print(F("  Offset DER: ")); Serial.print(offsetDer); Serial.print(F(" -> ")); Serial.println(vd);
+  Serial.println(F("─────────────────────────────────────────────"));
+}
+
+// ===================== COMANDOS =====================
+
+void procesarComando(String cmd)
+{
+  cmd.trim();
+  cmd.toUpperCase();
+
+  if      (cmd == "CAL")   { sensorOn = false; calibrarSensores(); }
+  else if (cmd == "READ")  { mostrarSensores(); }
+  else if (cmd == "START") { sensorOn = true;  Serial.println(F(">> Lectura continua ON")); }
+  else if (cmd == "LIVE")  { sensorOn = true;  Serial.println(F(">> Modo LIVE ON")); }
+  else if (cmd == "PAUSE") { sensorOn = false; Serial.println(F(">> Display pausado")); }
+  else if (cmd == "STOP")  { sensorOn = false; detener(); Serial.println(F(">> Todo detenido")); }
+  else if (cmd == "TEST")  { sensorOn = false; testMotores(); }
+  else if (cmd == "GO")    { moverMotores(velocidad, velocidad); Serial.println(F(">> Adelante")); }
+  else if (cmd == "BACK")  { moverMotores(-velocidad, -velocidad); Serial.println(F(">> Atras")); }
+  else if (cmd == "MSTOP") { detener(); Serial.println(F(">> Motores OFF")); }
+  else if (cmd == "STATUS"){ imprimirEstado(); }
+  else if (cmd == "HELP")  { imprimirAyuda(); }
+  else if (cmd == "L+") { offsetIzq = constrain(offsetIzq + 5, -127, 127); Serial.print(F(">> IZQ: ")); Serial.println(offsetIzq); if (motorOn) moverMotores(velocidad, velocidad); }
+  else if (cmd == "L-") { offsetIzq = constrain(offsetIzq - 5, -127, 127); Serial.print(F(">> IZQ: ")); Serial.println(offsetIzq); if (motorOn) moverMotores(velocidad, velocidad); }
+  else if (cmd == "R+") { offsetDer = constrain(offsetDer + 5, -127, 127); Serial.print(F(">> DER: ")); Serial.println(offsetDer); if (motorOn) moverMotores(velocidad, velocidad); }
+  else if (cmd == "R-") { offsetDer = constrain(offsetDer - 5, -127, 127); Serial.print(F(">> DER: ")); Serial.println(offsetDer); if (motorOn) moverMotores(velocidad, velocidad); }
+  else if (cmd.startsWith("V "))
+  {
+    velocidad = constrain(cmd.substring(2).toInt(), 0, 255);
+    Serial.print(F(">> Velocidad: ")); Serial.println(velocidad);
+    if (motorOn) moverMotores(velocidad, velocidad);
+  }
+  else if (cmd.startsWith("INT "))
+  {
+    int val = cmd.substring(4).toInt();
+    if (val >= 50 && val <= 5000) { intervaloMs = val; Serial.print(F(">> Intervalo: ")); Serial.print(intervaloMs); Serial.println(F(" ms")); }
+    else Serial.println(F(">> Rango: 50-5000 ms"));
+  }
+  else { Serial.print(F(">> Desconocido: ")); Serial.println(cmd); }
+}
 
 // ===================== SETUP =====================
 
 void setup()
 {
   Serial.begin(9600);
+  delay(500);
 
-  // Cargar offsets desde EEPROM (calibracion previa)
-  offsetIzq = (int8_t)EEPROM.read(EEPROM_OFFSET_IZQ);
-  offsetDer = (int8_t)EEPROM.read(EEPROM_OFFSET_DER);
-  
-  // Si no hay calibracion previa, usar valores por defecto
-  if (offsetIzq == 255) offsetIzq = 5;      // Izq: +5
-  if (offsetDer == 255) offsetDer = -45;    // Der: -45
+  // Motores
+  pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
+  ledcSetup(LEDC_CANAL_IZQ, LEDC_FREQ, LEDC_RES);
+  ledcAttachPin(ENA, LEDC_CANAL_IZQ);
+  ledcSetup(LEDC_CANAL_DER, LEDC_FREQ, LEDC_RES);
+  ledcAttachPin(ENB, LEDC_CANAL_DER);
+  detener();
 
-  pinMode(ENA, OUTPUT);
-  pinMode(IN1, OUTPUT);
-  pinMode(IN2, OUTPUT);
-
-  pinMode(ENB, OUTPUT);
-  pinMode(IN3, OUTPUT);
-  pinMode(IN4, OUTPUT);
-
-  // Activar emisor IR en Pin 7
-  pinMode(7, OUTPUT);
-  digitalWrite(7, HIGH);
-
-  // Configuración QTR
+  // Sensores
+  pinMode(PIN_EMISOR_IR, OUTPUT);
+  digitalWrite(PIN_EMISOR_IR, HIGH);
   qtr.setTypeRC();
-  qtr.setSensorPins((const uint8_t[]){A0, A1, A2, A3, A4, A5, 2, 3}, NUM_SENSORS);
-  qtr.setEmitterPin(7);
+  qtr.setSensorPins((const uint8_t[]){16, 17, 25, 26, 32, 14, 4, 13}, NUM_SENSORS);
+  qtr.setEmitterPin(PIN_EMISOR_IR);
 
-  Serial.println("\n╔════════════════════════════════════╗");
-  Serial.println("║  LINE FOLLOWER - Iniciando...      ║");
-  Serial.println("╚════════════════════════════════════╝\n");
-
-  // Calibración mejorada
-  Serial.println("Calibrando sensores por 2.5 segundos...");
-  Serial.println("(Mueve el robot sobre blanco y negro)");
-  
-  for (int i = 0; i < 250; i++)
-  {
-    qtr.calibrate();
-    delay(10);
-    if (i % 50 == 0) Serial.print(".");
-  }
-  
-  Serial.println("\n✓ Calibración completada");
-  Serial.println("═════════════════════════════════════\n");
-  
-  // Lectura inicial para estabilizar
-  Serial.println("Estabilizando sensores...");
-  for (int i = 0; i < 20; i++)
-  {
-    qtr.readLineBlack(sensorValues);
-    delay(20);
-  }
-  
-  // Initializar PID con valores iniciales
-  error = 0;
-  errorAnterior = 0;
-  integral = 0;
-  
-  Serial.println("✓ Sistema listo\n");
-  delay(1000);
-}
-
-// ===================== FUNCIONES =====================
-
-void moverMotores(int velIzq, int velDer)
-{
-  velIzq = constrain(velIzq, -velocidadMax, velocidadMax);
-  velDer = constrain(velDer, -velocidadMax, velocidadMax);
-
-  // APLICAR OFFSETS DE CALIBRACIÓN
-  velIzq += offsetIzq;
-  velDer += offsetDer;
-
-  // Re-constrain después de aplicar offsets
-  velIzq = constrain(velIzq, -velocidadMax, velocidadMax);
-  velDer = constrain(velDer, -velocidadMax, velocidadMax);
-
-  // Motor izquierdo
-  if (velIzq >= 0)
-  {
-    digitalWrite(IN1, LOW);
-    digitalWrite(IN2, HIGH);
-  }
-  else
-  {
-    digitalWrite(IN1, HIGH);
-    digitalWrite(IN2, LOW);
-  }
-  analogWrite(ENA, abs(velIzq));
-
-  // Motor derecho (INVERTIDO)
-  if (velDer >= 0)
-  {
-    digitalWrite(IN3, HIGH);
-    digitalWrite(IN4, LOW);
-  }
-  else
-  {
-    digitalWrite(IN3, LOW);
-    digitalWrite(IN4, HIGH);
-  }
-  analogWrite(ENB, abs(velDer));
-}
-
-void imprimirDebug(uint16_t posicion, int error, int correccion, int velIzq, int velDer)
-{
-  unsigned long ahora = millis();
-  if (ahora - ultimaImpresion < INTERVALO_DEBUG) return;
-  ultimaImpresion = ahora;
-
-  Serial.print("POS:");
-  Serial.print(posicion);
-  Serial.print(" | ERR:");
-  Serial.print(error);
-  Serial.print(" | CORR:");
-  Serial.print(correccion);
-  Serial.print(" | VL:");
-  Serial.print(velIzq);
-  Serial.print(" VR:");
-  Serial.println(velDer);
+  imprimirAyuda();
+  imprimirEstado();
 }
 
 // ===================== LOOP =====================
 
 void loop()
 {
-  uint16_t posicion = qtr.readLineBlack(sensorValues);
-  
-  error = posicion - 3500;
-
-  // Detectar si hay línea (umbral mejorado)
-  bool lineaDetectada = false;
-  int sensorActivoCount = 0;
-  
-  for (int i = 0; i < NUM_SENSORS; i++)
+  if (Serial.available())
   {
-    if (sensorValues[i] > 400)  // Threshold aumentado (era 200)
+    String cmd = Serial.readStringUntil('\n');
+    procesarComando(cmd);
+  }
+
+  if (sensorOn)
+  {
+    unsigned long ahora = millis();
+    if (ahora - ultimaImpresion >= (unsigned long)intervaloMs)
     {
-      lineaDetectada = true;
-      sensorActivoCount++;
+      ultimaImpresion = ahora;
+      motorOn ? mostrarLive() : mostrarSensores();
     }
-  }
-
-  if (DEBUG_MODO_SENSORES)
-  {
-    imprimirDebug(posicion, error, 0, 0, 0);
-  }
-
-  // Si no detecta línea → girar suavemente SIN MARCHA ATRÁS
-  if (!lineaDetectada || sensorActivoCount < 2)  // Requiere al menos 2 sensores
-  {
-    if (DEBUG_MODO_SENSORES) Serial.println("→ SIN LINEA - VIRANDO SUAVE");
-    
-    // Girar hacia donde estaba el error, pero sin marcha atrás
-    if (errorAnterior > 0)
-      moverMotores(120, 60);  // Gira a la derecha lentamente
-    else
-      moverMotores(60, 120);  // Gira a la izquierda lentamente
-    return;
-  }
-
-  // ═══════════════════ PID CONTROL ═══════════════════
-
-  // Integral con anti-windup
-  integral += error;
-  integral = constrain(integral, -600, 600);  // Rango ampliado para curvas
-
-  // Derivada
-  int derivada = error - errorAnterior;
-  
-  // Cálculo de corrección
-  int correccion = (Kp * error) + (Ki * integral) + (Kd * derivada);
-  correccion = constrain(correccion, -100, 100);  // Límite para curvas
-
-  errorAnterior = error;
-
-  // Velocidad adaptativa
-  int velocidadActual = velocidadBase;
-  
-  if (abs(error) < 200)        velocidadActual = 240;  // Recto
-  else if (abs(error) > 2000)  velocidadActual = 140;  // Curva cerrada
-  else                         velocidadActual = 190;  // Curva normal
-
-  int velIzq = velocidadActual + correccion;
-  int velDer = velocidadActual - correccion;
-
-  // Asegurar que nunca va hacia atrás (ambos motores siempre positivos)
-  velIzq = constrain(velIzq, 0, velocidadMax);
-  velDer = constrain(velDer, 0, velocidadMax);
-
-  moverMotores(velIzq, velDer);
-
-  if (DEBUG_MODO_SENSORES)
-  {
-    imprimirDebug(posicion, error, correccion, velIzq, velDer);
   }
 }
