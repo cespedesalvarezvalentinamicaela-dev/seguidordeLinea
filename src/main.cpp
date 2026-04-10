@@ -39,7 +39,20 @@ int      velocidad = 200;
 int      offsetIzq = 0;
 int      offsetDer = 0;
 uint16_t posActual = 3500;
-int      pasoMs    = 300;   // duración de cada paso (ms)
+int      pasoMs    = 300;
+
+// ===================== PID =====================
+
+bool  pidOn        = false;
+float Kp           = 0.35f;
+float Ki           = 0.0003f;
+float Kd           = 0.20f;
+int   pidError     = 0;
+int   pidErrorAnt  = 0;
+long  pidIntegral  = 0;
+int   pidCorr      = 0;
+int   pidVelIzq    = 0;
+int   pidVelDer    = 0;
 
 // ===================== MOTORES =====================
 
@@ -125,6 +138,13 @@ void ejecutarComando(String cmd)
   else if (cmd == "STEP_BACK") { moverMotores(-velocidad, -velocidad); delay(pasoMs); detener(); }
   else if (cmd == "STEP_LEFT") { moverMotores(-velocidad,  velocidad); delay(pasoMs); detener(); }
   else if (cmd == "STEP_RIGHT"){ moverMotores( velocidad, -velocidad); delay(pasoMs); detener(); }
+  else if (cmd == "PID_ON")
+  {
+    if (!calibrado) return;
+    pidErrorAnt = 0; pidIntegral = 0;
+    pidOn = true;
+  }
+  else if (cmd == "PID_OFF")   { pidOn = false; detener(); }
   else if (cmd.startsWith("V "))
   {
     velocidad = constrain(cmd.substring(2).toInt(), 0, 255);
@@ -134,6 +154,9 @@ void ejecutarComando(String cmd)
   {
     pasoMs = constrain(cmd.substring(5).toInt(), 50, 2000);
   }
+  else if (cmd.startsWith("KP ")) { Kp = cmd.substring(3).toFloat(); }
+  else if (cmd.startsWith("KI ")) { Ki = cmd.substring(3).toFloat(); }
+  else if (cmd.startsWith("KD ")) { Kd = cmd.substring(3).toFloat(); }
 }
 
 // ===================== WEB PAGE =====================
@@ -215,6 +238,18 @@ input[type=range]{flex:1;accent-color:#0f0;height:6px}
   <span class="vv" id="pv">300ms</span>
 </div>
 
+<h2>Simulacion PID</h2>
+<div class="status" id="pidst" style="color:#888">PID apagado</div>
+<div class="row" style="margin-top:6px">
+  <button id="pidbtn" onclick="togglePid()" style="flex:2;border-color:#0af;color:#0af">&#9654; INICIAR PID</button>
+  <button onclick="cmd('PID_OFF')" style="flex:1">STOP</button>
+</div>
+<div style="margin-top:8px">
+  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Kp</span><input type="range" id="kp" min="0" max="100" value="35" oninput="onK('kp',this.value,100)"><span class="vv" id="kpv">0.35</span></div>
+  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Ki</span><input type="range" id="ki" min="0" max="100" value="3"  oninput="onK('ki',this.value,100000)"><span class="vv" id="kiv">0.0003</span></div>
+  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Kd</span><input type="range" id="kd" min="0" max="100" value="20" oninput="onK('kd',this.value,100)"><span class="vv" id="kdv">0.20</span></div>
+</div>
+
 <h2>Velocidad</h2>
 <div class="vel-row">
   <input type="range" id="vel" min="0" max="255" value="150" oninput="onVel(this.value)">
@@ -260,6 +295,20 @@ function onPaso(v){
   pt=setTimeout(()=>cmd('PASO '+v),400);
 }
 
+let pidActivo=false;
+function togglePid(){
+  if(pidActivo){cmd('PID_OFF');}
+  else{cmd('PID_ON');}
+}
+
+let kt={};
+function onK(k,v,scale){
+  let val=(v/scale).toFixed(k==='ki'?6:2);
+  document.getElementById(k+'v').textContent=val;
+  clearTimeout(kt[k]);
+  kt[k]=setTimeout(()=>cmd(k.toUpperCase()+' '+val),400);
+}
+
 function tick(){
   fetch('/status').then(r=>r.json()).then(d=>{
     document.getElementById('st').innerHTML=
@@ -291,6 +340,23 @@ function tick(){
     document.getElementById('offst').innerHTML=
       'IZQ: <b>'+(d.izq>=0?'+':'')+d.izq+'</b> &rarr; '+d.vi+
       ' &nbsp;&nbsp; DER: <b>'+(d.der>=0?'+':'')+d.der+'</b> &rarr; '+d.vd;
+
+    pidActivo=d.pid;
+    let pb=document.getElementById('pidbtn');
+    if(d.pid){
+      pb.textContent='⏹ PARAR PID';
+      pb.style.borderColor='#f44'; pb.style.color='#f44';
+      document.getElementById('pidst').style.color='#0f0';
+      document.getElementById('pidst').innerHTML=
+        'ERR: <b>'+(d.perr>=0?'+':'')+d.perr+'</b>'+
+        ' &nbsp; CORR: <b>'+(d.pcor>=0?'+':'')+d.pcor+'</b>'+
+        '<br>VL: <b>'+d.pvl+'</b> &nbsp; VR: <b>'+d.pvr+'</b>';
+    } else {
+      pb.textContent='▶ INICIAR PID';
+      pb.style.borderColor='#0af'; pb.style.color='#0af';
+      document.getElementById('pidst').style.color='#888';
+      document.getElementById('pidst').textContent='PID apagado';
+    }
   }).catch(()=>{});
 }
 setInterval(tick,300);
@@ -326,6 +392,14 @@ void handleStatus()
   json += "\"vi\":"   + String(vi) + ",";
   json += "\"vd\":"   + String(vd) + ",";
   json += "\"paso\":"  + String(pasoMs) + ",";
+  json += "\"pid\":"  + String(pidOn ? "true" : "false") + ",";
+  json += "\"kp\":"   + String(Kp, 4) + ",";
+  json += "\"ki\":"   + String(Ki, 6) + ",";
+  json += "\"kd\":"   + String(Kd, 4) + ",";
+  json += "\"perr\":" + String(pidError) + ",";
+  json += "\"pcor\":" + String(pidCorr) + ",";
+  json += "\"pvl\":"  + String(pidVelIzq) + ",";
+  json += "\"pvr\":"  + String(pidVelDer) + ",";
   json += "\"pos\":"  + String(posActual) + ",";
   json += "\"s\":[";
   for (int i = 0; i < NUM_SENSORS; i++)
@@ -397,10 +471,43 @@ void loop()
 {
   server.handleClient();
 
-  // Fallback Serial
   if (Serial.available())
   {
     String cmd = Serial.readStringUntil('\n');
     ejecutarComando(cmd);
+  }
+
+  if (pidOn && calibrado)
+  {
+    posActual = qtr.readLineBlack(sensorValues);
+    pidError  = (int)posActual - 3500;
+
+    // sin linea: girar hacia el ultimo lado conocido
+    bool lineaDetectada = false;
+    for (int i = 0; i < NUM_SENSORS; i++)
+      if (sensorValues[i] > 500) { lineaDetectada = true; break; }
+
+    if (!lineaDetectada)
+    {
+      if (pidErrorAnt > 0) moverMotores( velocidad/2, -velocidad/2);
+      else                 moverMotores(-velocidad/2,  velocidad/2);
+      return;
+    }
+
+    pidIntegral += pidError;
+    pidIntegral  = constrain(pidIntegral, -600, 600);
+
+    int derivada = pidError - pidErrorAnt;
+    pidCorr      = (int)(Kp * pidError + Ki * pidIntegral + Kd * derivada);
+    pidCorr      = constrain(pidCorr, -150, 150);
+    pidErrorAnt  = pidError;
+
+    int velBase = (abs(pidError) < 200) ? velocidad
+                : (abs(pidError) > 2000) ? max(80, velocidad - 80)
+                :                          max(80, velocidad - 40);
+
+    pidVelIzq = constrain(velBase + pidCorr, 0, VEL_MAX);
+    pidVelDer = constrain(velBase - pidCorr, 0, VEL_MAX);
+    moverMotores(pidVelIzq, pidVelDer);
   }
 }
