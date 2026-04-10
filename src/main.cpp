@@ -152,8 +152,8 @@ void loop()
               : (abs(pidError) > 2000) ? max(80, velocidadBase - 80)
               :                          max(80, velocidadBase - 40);
 
-  int velIzq = constrain(velBase - correccion, 0, VEL_MAX);
-  int velDer = constrain(velBase + correccion, 0, VEL_MAX);
+  int velIzq = constrain(velBase + correccion, 0, VEL_MAX);
+  int velDer = constrain(velBase - correccion, 0, VEL_MAX);
 
   moverMotores(velIzq, velDer);
 
