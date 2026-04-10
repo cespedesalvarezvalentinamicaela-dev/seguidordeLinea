@@ -92,6 +92,20 @@ Muestra en tiempo real:
 
 Los cambios de velocidad y offset tienen efecto inmediato si los motores están encendidos.
 
+### D-pad paso a paso
+
+Cruz de 4 botones (↑ ↓ ← →) para mover el robot en pasos cortos y observar la respuesta de los sensores en tiempo real.
+
+| Botón | Acción |
+|-------|--------|
+| ↑     | Avanza adelante durante el tiempo configurado y para |
+| ↓     | Avanza atrás durante el tiempo configurado y para |
+| ←     | Gira a la izquierda (motor izq atrás, motor der adelante) y para |
+| →     | Gira a la derecha (motor izq adelante, motor der atrás) y para |
+| **Slider Duracion** | Tiempo de cada paso: 50ms – 2000ms (default 300ms) |
+
+Uso típico: calibrar con `CAL`, colocar el robot sobre la pista y avanzar paso a paso con ↑ observando qué sensores se activan.
+
 ---
 
 ## Flujo de calibración recomendado
@@ -126,6 +140,8 @@ Si el cable USB está conectado, también se aceptan comandos por Serial (9600 b
 ```
 CAL   GO   BACK   MSTOP   STOP   TEST
 V <n>   L+   L-   R+   R-
+STEP_FWD   STEP_BACK   STEP_LEFT   STEP_RIGHT
+PASO <ms>
 ```
 
 ---
