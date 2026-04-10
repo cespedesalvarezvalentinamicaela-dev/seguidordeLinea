@@ -120,6 +120,7 @@ void ejecutarComando(String cmd)
   else if (cmd == "L-") { offsetIzq = constrain(offsetIzq - 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
   else if (cmd == "R+") { offsetDer = constrain(offsetDer + 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
   else if (cmd == "R-") { offsetDer = constrain(offsetDer - 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
+  else if (cmd == "RESET_OFF") { offsetIzq = 0; offsetDer = 0; if (motorOn) moverMotores(velocidad, velocidad); }
   else if (cmd == "STEP_FWD")  { moverMotores( velocidad,  velocidad); delay(pasoMs); detener(); }
   else if (cmd == "STEP_BACK") { moverMotores(-velocidad, -velocidad); delay(pasoMs); detener(); }
   else if (cmd == "STEP_LEFT") { moverMotores(-velocidad,  velocidad); delay(pasoMs); detener(); }
@@ -221,12 +222,14 @@ input[type=range]{flex:1;accent-color:#0f0;height:6px}
 </div>
 
 <h2>Offset IZQ / DER</h2>
+<div class="status" id="offst">IZQ: 0 &rarr; 0 &nbsp; DER: 0 &rarr; 0</div>
 <div class="row">
   <button onclick="cmd('L+')">IZQ +5</button>
   <button onclick="cmd('L-')">IZQ -5</button>
   <button onclick="cmd('R+')">DER +5</button>
   <button onclick="cmd('R-')">DER -5</button>
 </div>
+<div class="row"><button onclick="cmd('RESET_OFF')" style="border-color:#f80;color:#f80">Reset offsets</button></div>
 
 <button class="red" onclick="cmd('STOP')">&#9646;&#9646; STOP TODO</button>
 
@@ -285,6 +288,9 @@ function tick(){
     document.getElementById('vv').textContent=d.vel;
     document.getElementById('paso').value=d.paso;
     document.getElementById('pv').textContent=d.paso+'ms';
+    document.getElementById('offst').innerHTML=
+      'IZQ: <b>'+(d.izq>=0?'+':'')+d.izq+'</b> &rarr; '+d.vi+
+      ' &nbsp;&nbsp; DER: <b>'+(d.der>=0?'+':'')+d.der+'</b> &rarr; '+d.vd;
   }).catch(()=>{});
 }
 setInterval(tick,300);
