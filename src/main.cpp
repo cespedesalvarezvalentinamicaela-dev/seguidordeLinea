@@ -32,9 +32,9 @@ int offsetDer = -5;   // rueda derecha calibrada a 195
 
 int   velocidadBase = 200;
 
-float Kp = 0.03f;
+float Kp = 0.08f;
 float Ki = 0.0f;
-float Kd = 0.01f;
+float Kd = 0.04f;
 
 int  pidError    = 0;
 int  pidErrorAnt = 0;
@@ -120,44 +120,41 @@ void setup()
 
 void loop()
 {
-  static unsigned long ultimoPID = 0;
-  if (millis() - ultimoPID < 10) return;
-  ultimoPID = millis();
-
   uint16_t posicion = qtr.readLineBlack(sensorValues);
   pidError = (int)posicion - 3500;
 
   // Deteccion de linea
-  bool lineaDetectada = false;
-  int  activos        = 0;
+  int activos = 0;
   for (int i = 0; i < NUM_SENSORS; i++)
-    if (sensorValues[i] > 500) { lineaDetectada = true; activos++; }
-
-  // Sin linea: girar hacia el ultimo lado conocido
-  if (!lineaDetectada || activos < 2)
-  {
-    if (pidErrorAnt > 0) moverMotores(velocidadBase / 2, -velocidadBase / 2);
-    else                 moverMotores(-velocidadBase / 2,  velocidadBase / 2);
-    return;
-  }
+    if (sensorValues[i] > 500) activos++;
 
   // PID
   pidIntegral += pidError;
   pidIntegral  = constrain(pidIntegral, -600, 600);
 
-  int derivada = pidError - pidErrorAnt;
+  int derivada   = pidError - pidErrorAnt;
   int correccion = constrain(
     (int)(Kp * pidError + Ki * pidIntegral + Kd * derivada),
-    -50, 50);
+    -120, 120);
   pidErrorAnt = pidError;
 
-  // Velocidad adaptativa
-  int velBase = (abs(pidError) < 200)  ? velocidadBase
-              : (abs(pidError) > 2000) ? max(80, velocidadBase - 80)
-              :                          max(80, velocidadBase - 40);
+  int velIzq, velDer;
 
-  int velIzq = constrain(velBase + correccion, 0, VEL_MAX);
-  int velDer = constrain(velBase - correccion, 0, VEL_MAX);
+  if (activos == 0)
+  {
+    // Sin linea: buscar girando hacia el ultimo lado conocido
+    if (pidErrorAnt > 0) { velIzq = velocidadBase; velDer = 0; }
+    else                 { velIzq = 0; velDer = velocidadBase; }
+  }
+  else
+  {
+    // Con linea: PID normal
+    int velBase = (abs(pidError) < 200)  ? velocidadBase
+                : (abs(pidError) > 2000) ? max(100, velocidadBase - 80)
+                :                          max(100, velocidadBase - 40);
+    velIzq = constrain(velBase + correccion, 0, VEL_MAX);
+    velDer = constrain(velBase - correccion, 0, VEL_MAX);
+  }
 
   moverMotores(velIzq, velDer);
 
@@ -167,6 +164,7 @@ void loop()
   {
     ultimaPrint = millis();
     Serial.print(F("POS:")); Serial.print(posicion);
+    Serial.print(F(" ACT:")); Serial.print(activos);
     Serial.print(F(" ERR:")); Serial.print(pidError);
     Serial.print(F(" CORR:")); Serial.print(correccion);
     Serial.print(F(" VL:")); Serial.print(velIzq);
