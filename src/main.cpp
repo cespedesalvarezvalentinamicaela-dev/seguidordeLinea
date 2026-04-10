@@ -1,13 +1,5 @@
 #include <Arduino.h>
 #include <QTRSensors.h>
-#include <WiFi.h>
-#include <WebServer.h>
-
-// ===================== WIFI AP =====================
-
-const char* AP_SSID = "Robot-Calibrador";
-const char* AP_PASS = "12345678";
-WebServer server(80);
 
 // ===================== SENSORES =====================
 
@@ -31,28 +23,22 @@ uint16_t sensorValues[NUM_SENSORS];
 #define LEDC_CANAL_IZQ 0
 #define LEDC_CANAL_DER 1
 
-// ===================== ESTADO =====================
+// ===================== OFFSETS =====================
 
-bool     calibrado = false;
-bool     motorOn   = false;
-int      velocidad = 200;
-int      offsetIzq = 0;
-int      offsetDer = -5;
-uint16_t posActual = 3500;
-int      pasoMs    = 300;
+int offsetIzq = 0;
+int offsetDer = -5;   // rueda derecha calibrada a 195
 
 // ===================== PID =====================
 
-bool  pidOn        = false;
-float Kp           = 0.08f;
-float Ki           = 0.0001f;
-float Kd           = 0.05f;
-int   pidError     = 0;
-int   pidErrorAnt  = 0;
-long  pidIntegral  = 0;
-int   pidCorr      = 0;
-int   pidVelIzq    = 0;
-int   pidVelDer    = 0;
+int   velocidadBase = 200;
+
+float Kp = 0.08f;
+float Ki = 0.0001f;
+float Kd = 0.05f;
+
+int  pidError    = 0;
+int  pidErrorAnt = 0;
+long pidIntegral = 0;
 
 // ===================== MOTORES =====================
 
@@ -68,388 +54,12 @@ void moverMotores(int velIzq, int velDer)
   digitalWrite(IN3, velDer >= 0 ? HIGH : LOW);
   digitalWrite(IN4, velDer >= 0 ? LOW  : HIGH);
   ledcWrite(LEDC_CANAL_DER, abs(velDer));
-
-  motorOn = true;
 }
 
 void detener()
 {
   ledcWrite(LEDC_CANAL_IZQ, 0);
   ledcWrite(LEDC_CANAL_DER, 0);
-  motorOn = false;
-}
-
-// ===================== CALIBRACIÓN =====================
-
-void calibrarSensores()
-{
-  bool motoresEstaban = motorOn;
-  if (motorOn) detener();
-  calibrado = false;
-
-  Serial.println(F(">> Calibrando (3s)..."));
-  for (int i = 0; i < 300; i++)
-  {
-    qtr.calibrate();
-    delay(10);
-    if (i % 10 == 0) server.handleClient(); // mantener web activa
-  }
-  calibrado = true;
-  posActual = qtr.readLineBlack(sensorValues);
-  Serial.println(F(">> Calibración completada"));
-
-  if (motoresEstaban) moverMotores(velocidad, velocidad);
-}
-
-// ===================== TEST MOTORES =====================
-
-void testMotores()
-{
-  Serial.println(F(">> TEST MOTORES"));
-  moverMotores(velocidad, velocidad);  delay(2000); server.handleClient();
-  detener();                           delay(1000); server.handleClient();
-  moverMotores(-velocidad, -velocidad);delay(2000); server.handleClient();
-  detener();                           delay(1000); server.handleClient();
-  moverMotores(velocidad / 2, velocidad); delay(1000); server.handleClient();
-  moverMotores(velocidad, velocidad / 2); delay(1000); server.handleClient();
-  detener();
-  Serial.println(F(">> Test completado"));
-}
-
-// ===================== COMANDO =====================
-
-void ejecutarComando(String cmd)
-{
-  cmd.trim();
-  cmd.toUpperCase();
-
-  if      (cmd == "CAL")   { calibrarSensores(); }
-  else if (cmd == "GO")    { moverMotores(velocidad, velocidad); }
-  else if (cmd == "BACK")  { moverMotores(-velocidad, -velocidad); }
-  else if (cmd == "MSTOP") { detener(); }
-  else if (cmd == "STOP")  { detener(); }
-  else if (cmd == "TEST")  { testMotores(); }
-  else if (cmd == "L+") { offsetIzq = constrain(offsetIzq + 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
-  else if (cmd == "L-") { offsetIzq = constrain(offsetIzq - 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
-  else if (cmd == "R+") { offsetDer = constrain(offsetDer + 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
-  else if (cmd == "R-") { offsetDer = constrain(offsetDer - 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
-  else if (cmd == "RESET_OFF") { offsetIzq = 0; offsetDer = 0; if (motorOn) moverMotores(velocidad, velocidad); }
-  else if (cmd == "STEP_FWD")
-  {
-    if (pidOn && calibrado)
-    {
-      // un paso controlado por PID
-      unsigned long fin = millis() + pasoMs;
-      while (millis() < fin)
-      {
-        posActual    = qtr.readLineBlack(sensorValues);
-        pidError     = (int)posActual - 3500;
-        pidIntegral += pidError;
-        pidIntegral  = constrain(pidIntegral, -600, 600);
-        int der      = pidError - pidErrorAnt;
-        pidCorr      = constrain((int)(Kp*pidError + Ki*pidIntegral + Kd*der), -150, 150);
-        pidErrorAnt  = pidError;
-        int velBase  = (abs(pidError) < 200) ? velocidad
-                     : (abs(pidError) > 2000) ? max(80, velocidad-80)
-                     :                          max(80, velocidad-40);
-        pidVelIzq = constrain(velBase - pidCorr, 0, VEL_MAX);
-        pidVelDer = constrain(velBase + pidCorr, 0, VEL_MAX);
-        moverMotores(pidVelIzq, pidVelDer);
-        server.handleClient();
-      }
-      detener();
-    }
-    else { moverMotores(velocidad, velocidad); delay(pasoMs); detener(); }
-  }
-  else if (cmd == "STEP_BACK") { moverMotores(-velocidad, -velocidad); delay(pasoMs); detener(); }
-  else if (cmd == "STEP_LEFT") { moverMotores( velocidad, -velocidad); delay(pasoMs); detener(); }
-  else if (cmd == "STEP_RIGHT"){ moverMotores(-velocidad,  velocidad); delay(pasoMs); detener(); }
-  else if (cmd == "PID_ON")
-  {
-    if (!calibrado) return;
-    pidErrorAnt = 0; pidIntegral = 0;
-    pidOn = true;
-  }
-  else if (cmd == "PID_OFF")   { pidOn = false; detener(); }
-  else if (cmd.startsWith("V "))
-  {
-    velocidad = constrain(cmd.substring(2).toInt(), 0, 255);
-    if (motorOn) moverMotores(velocidad, velocidad);
-  }
-  else if (cmd.startsWith("PASO "))
-  {
-    pasoMs = constrain(cmd.substring(5).toInt(), 50, 2000);
-  }
-  else if (cmd.startsWith("KP ")) { Kp = cmd.substring(3).toFloat(); }
-  else if (cmd.startsWith("KI ")) { Ki = cmd.substring(3).toFloat(); }
-  else if (cmd.startsWith("KD ")) { Kd = cmd.substring(3).toFloat(); }
-}
-
-// ===================== WEB PAGE =====================
-
-static const char HTML_PAGE[] = R"rawhtml(
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Robot Calibrador</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:monospace;background:#111;color:#0f0;padding:12px;max-width:480px;margin:auto}
-h2{color:#0f0;border-bottom:1px solid #333;padding:6px 0;margin:14px 0 8px;font-size:15px}
-.status{background:#1a1a1a;border:1px solid #333;padding:8px;border-radius:4px;margin:8px 0;font-size:13px;line-height:1.8}
-.row{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
-button{background:#1a1a1a;color:#0f0;border:1px solid #0f0;padding:13px 14px;border-radius:4px;font-size:15px;cursor:pointer;font-family:monospace;flex:1}
-button:active{background:#0f0;color:#000}
-.red{border-color:#f44;color:#f44;margin-top:8px;width:100%}
-.red:active{background:#f44;color:#000}
-.sensors{display:flex;gap:3px;height:80px;align-items:flex-end;margin:6px 0;background:#0a0a0a;padding:4px;border-radius:4px}
-.s{flex:1;border-radius:2px 2px 0 0;min-height:2px;transition:height .15s;background:#333}
-.s.on{background:#0f0}
-.lbls{display:flex;gap:3px}
-.lbl{flex:1;text-align:center;font-size:10px;color:#555}
-.track{height:14px;background:#1a1a1a;border-radius:7px;margin:6px 0;position:relative;border:1px solid #333}
-.dot{width:14px;height:14px;background:#0f0;border-radius:50%;position:absolute;top:0;transition:left .15s;margin-left:-7px}
-.pos{font-size:13px;margin:4px 0}
-.err{color:#f80}
-.vel-row{display:flex;align-items:center;gap:10px;margin:6px 0}
-input[type=range]{flex:1;accent-color:#0f0;height:6px}
-.vv{min-width:28px;text-align:right}
-.dpad{display:grid;grid-template-columns:1fr 1fr 1fr;grid-template-rows:1fr 1fr 1fr;gap:6px;width:180px;margin:8px auto}
-.dpad button{padding:16px 0;font-size:20px}
-.dpad .mid{display:flex;align-items:center;justify-content:center;color:#333;font-size:12px}
-</style>
-</head>
-<body>
-<h2>&#9881; Robot Calibrador WiFi</h2>
-
-<div class="status" id="st">Conectando...</div>
-
-<h2>Sensores</h2>
-<div class="lbls" id="lbls"></div>
-<div class="sensors" id="bars"></div>
-<div class="pos" id="pos">POS: -- &nbsp; ERR: --</div>
-<div class="track"><div class="dot" id="dot" style="left:50%"></div></div>
-
-<h2>Calibracion</h2>
-<div class="row">
-  <button onclick="cmd('CAL')" style="flex:2">&#9889; CAL (3s)</button>
-  <button onclick="cmd('READ')" style="flex:1">READ</button>
-</div>
-
-<h2>Motores</h2>
-<div class="row">
-  <button onclick="cmd('GO')">&#9654; GO</button>
-  <button onclick="cmd('BACK')">&#9664; BACK</button>
-  <button onclick="cmd('MSTOP')">&#9646;&#9646; STOP</button>
-</div>
-<div class="row"><button onclick="cmd('TEST')">TEST secuencia</button></div>
-
-<h2>Paso a paso</h2>
-<div class="dpad">
-  <div></div>
-  <button onclick="cmd('STEP_FWD')">&#9650;</button>
-  <div></div>
-  <button onclick="cmd('STEP_LEFT')">&#9664;</button>
-  <div class="mid">PASO</div>
-  <button onclick="cmd('STEP_RIGHT')">&#9654;</button>
-  <div></div>
-  <button onclick="cmd('STEP_BACK')">&#9660;</button>
-  <div></div>
-</div>
-<div class="vel-row" style="margin-top:6px">
-  <span style="font-size:12px;color:#888">Duracion:</span>
-  <input type="range" id="paso" min="50" max="2000" value="300" oninput="onPaso(this.value)">
-  <span class="vv" id="pv">300ms</span>
-</div>
-
-<h2>Simulacion PID</h2>
-<div class="status" id="pidst" style="color:#888">PID apagado</div>
-<div class="row" style="margin-top:6px">
-  <button id="pidbtn" onclick="togglePid()" style="flex:2;border-color:#0af;color:#0af">&#9654; INICIAR PID</button>
-  <button onclick="cmd('PID_OFF')" style="flex:1">STOP</button>
-</div>
-<div style="margin-top:8px">
-  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Kp</span><input type="range" id="kp" min="0" max="100" value="8"  oninput="onK('kp',this.value,100)"><span class="vv" id="kpv">0.08</span></div>
-  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Ki</span><input type="range" id="ki" min="0" max="100" value="1"  oninput="onK('ki',this.value,100000)"><span class="vv" id="kiv">0.0001</span></div>
-  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Kd</span><input type="range" id="kd" min="0" max="100" value="5"  oninput="onK('kd',this.value,100)"><span class="vv" id="kdv">0.05</span></div>
-</div>
-
-<h2>Velocidad</h2>
-<div class="vel-row">
-  <input type="range" id="vel" min="0" max="255" value="150" oninput="onVel(this.value)">
-  <span class="vv" id="vv">150</span>
-</div>
-
-<h2>Offset IZQ / DER</h2>
-<div class="status" id="offst">IZQ: 0 &rarr; 0 &nbsp; DER: 0 &rarr; 0</div>
-<div class="row">
-  <button onclick="cmd('L+')">IZQ +5</button>
-  <button onclick="cmd('L-')">IZQ -5</button>
-  <button onclick="cmd('R+')">DER +5</button>
-  <button onclick="cmd('R-')">DER -5</button>
-</div>
-<div class="row"><button onclick="cmd('RESET_OFF')" style="border-color:#f80;color:#f80">Reset offsets</button></div>
-
-<button class="red" onclick="cmd('STOP')">&#9646;&#9646; STOP TODO</button>
-
-<script>
-let vt;
-(function(){
-  let l='',b='';
-  for(let i=8;i>=1;i--){
-    l+='<div class="lbl">S'+i+'</div>';
-    b+='<div class="s" id="s'+i+'" style="height:2px"></div>';
-  }
-  document.getElementById('lbls').innerHTML=l;
-  document.getElementById('bars').innerHTML=b;
-})();
-
-function cmd(c){fetch('/cmd?c='+encodeURIComponent(c)).catch(()=>{});}
-
-function onVel(v){
-  document.getElementById('vv').textContent=v;
-  clearTimeout(vt);
-  vt=setTimeout(()=>cmd('V '+v),400);
-}
-
-let pt;
-function onPaso(v){
-  document.getElementById('pv').textContent=v+'ms';
-  clearTimeout(pt);
-  pt=setTimeout(()=>cmd('PASO '+v),400);
-}
-
-let pidActivo=false;
-function togglePid(){
-  if(pidActivo){cmd('PID_OFF');}
-  else{cmd('PID_ON');}
-}
-
-let kt={};
-function onK(k,v,scale){
-  let val=(v/scale).toFixed(k==='ki'?6:2);
-  document.getElementById(k+'v').textContent=val;
-  clearTimeout(kt[k]);
-  kt[k]=setTimeout(()=>cmd(k.toUpperCase()+' '+val),400);
-}
-
-function tick(){
-  fetch('/status').then(r=>r.json()).then(d=>{
-    document.getElementById('st').innerHTML=
-      '<b>Cal:</b> '+(d.cal?'<span style="color:#0f0">SI</span>':'<span style="color:#f44">NO</span>')+
-      ' &nbsp;<b>Motor:</b> '+(d.mot?'<span style="color:#0f0">ON</span>':'OFF')+
-      ' &nbsp;<b>Vel:</b> '+d.vel+
-      '<br><b>IZQ:</b> '+d.izq+' &rarr; '+d.vi+
-      ' &nbsp;<b>DER:</b> '+d.der+' &rarr; '+d.vd;
-
-    for(let i=0;i<8;i++){
-      let el=document.getElementById('s'+(i+1));
-      let h=Math.max(2,Math.round(d.s[i]/25));
-      el.style.height=h+'px';
-      el.className='s'+(d.s[i]>400?' on':'');
-    }
-
-    if(d.cal){
-      let err=d.pos-3500;
-      document.getElementById('pos').innerHTML=
-        'POS: '+d.pos+' &nbsp; ERR: <span class="err">'+(err>=0?'+':'')+err+'</span>';
-      let pct=Math.max(2,Math.min(96,100-d.pos/7000*100));
-      document.getElementById('dot').style.left=pct+'%';
-    }
-
-    document.getElementById('vel').value=d.vel;
-    document.getElementById('vv').textContent=d.vel;
-    document.getElementById('paso').value=d.paso;
-    document.getElementById('pv').textContent=d.paso+'ms';
-    document.getElementById('offst').innerHTML=
-      'IZQ: <b>'+(d.izq>=0?'+':'')+d.izq+'</b> &rarr; '+d.vi+
-      ' &nbsp;&nbsp; DER: <b>'+(d.der>=0?'+':'')+d.der+'</b> &rarr; '+d.vd;
-
-    pidActivo=d.pid;
-    let pb=document.getElementById('pidbtn');
-    if(d.pid){
-      pb.textContent='⏹ PARAR PID';
-      pb.style.borderColor='#f44'; pb.style.color='#f44';
-      document.getElementById('pidst').style.color='#0f0';
-      document.getElementById('pidst').innerHTML=
-        'ERR: <b>'+(d.perr>=0?'+':'')+d.perr+'</b>'+
-        ' &nbsp; CORR: <b>'+(d.pcor>=0?'+':'')+d.pcor+'</b>'+
-        '<br>VL: <b>'+d.pvl+'</b> &nbsp; VR: <b>'+d.pvr+'</b>';
-    } else {
-      pb.textContent='▶ INICIAR PID';
-      pb.style.borderColor='#0af'; pb.style.color='#0af';
-      document.getElementById('pidst').style.color='#888';
-      document.getElementById('pidst').textContent='PID apagado';
-    }
-  }).catch(()=>{});
-}
-setInterval(tick,300);
-tick();
-</script>
-</body>
-</html>
-)rawhtml";
-
-// ===================== HANDLERS =====================
-
-void handleRoot()
-{
-  server.send(200, "text/html", HTML_PAGE);
-}
-
-void handleStatus()
-{
-  if (calibrado)
-    posActual = qtr.readLineBlack(sensorValues);
-  else
-    qtr.read(sensorValues);
-
-  int vi = constrain(velocidad + offsetIzq, 0, VEL_MAX);
-  int vd = constrain(velocidad + offsetDer, 0, VEL_MAX);
-
-  String json = "{";
-  json += "\"cal\":"  + String(calibrado ? "true" : "false") + ",";
-  json += "\"mot\":"  + String(motorOn   ? "true" : "false") + ",";
-  json += "\"vel\":"  + String(velocidad) + ",";
-  json += "\"izq\":"  + String(offsetIzq) + ",";
-  json += "\"der\":"  + String(offsetDer) + ",";
-  json += "\"vi\":"   + String(vi) + ",";
-  json += "\"vd\":"   + String(vd) + ",";
-  json += "\"paso\":"  + String(pasoMs) + ",";
-  json += "\"pid\":"  + String(pidOn ? "true" : "false") + ",";
-  json += "\"kp\":"   + String(Kp, 4) + ",";
-  json += "\"ki\":"   + String(Ki, 6) + ",";
-  json += "\"kd\":"   + String(Kd, 4) + ",";
-  json += "\"perr\":" + String(pidError) + ",";
-  json += "\"pcor\":" + String(pidCorr) + ",";
-  json += "\"pvl\":"  + String(pidVelIzq) + ",";
-  json += "\"pvr\":"  + String(pidVelDer) + ",";
-  json += "\"pos\":"  + String(posActual) + ",";
-  json += "\"s\":[";
-  for (int i = 0; i < NUM_SENSORS; i++)
-  {
-    json += String(sensorValues[i]);
-    if (i < NUM_SENSORS - 1) json += ",";
-  }
-  json += "]}";
-
-  server.send(200, "application/json", json);
-}
-
-void handleCmd()
-{
-  if (server.hasArg("c"))
-  {
-    String c = server.arg("c");
-    server.send(200, "text/plain", "OK");
-    ejecutarComando(c);
-  }
-  else
-  {
-    server.send(400, "text/plain", "falta param c");
-  }
 }
 
 // ===================== SETUP =====================
@@ -475,32 +85,87 @@ void setup()
   qtr.setSensorPins((const uint8_t[]){16, 17, 25, 26, 32, 14, 4, 13}, NUM_SENSORS);
   qtr.setEmitterPin(PIN_EMISOR_IR);
 
-  // WiFi AP
-  WiFi.softAP(AP_SSID, AP_PASS);
-  IPAddress ip = WiFi.softAPIP();
-  Serial.print(F("\nWiFi AP: ")); Serial.println(AP_SSID);
-  Serial.print(F("Pass:    ")); Serial.println(AP_PASS);
-  Serial.print(F("URL:     http://")); Serial.println(ip);
+  // Calibracion automatica (3s)
+  Serial.println(F("\n[1/3] Calibrando sensores (3s)..."));
+  Serial.println(F("      Mueve el robot sobre negro y blanco."));
+  for (int i = 0; i < 300; i++)
+  {
+    qtr.calibrate();
+    delay(10);
+    if (i % 60 == 0) {
+      Serial.print(F("      "));
+      Serial.print(i / 3);
+      Serial.println(F("%"));
+    }
+  }
+  Serial.println(F("      100% - OK"));
 
-  // Rutas web
-  server.on("/",       handleRoot);
-  server.on("/status", handleStatus);
-  server.on("/cmd",    handleCmd);
-  server.begin();
+  // Lectura inicial para estabilizar
+  for (int i = 0; i < 20; i++) { qtr.readLineBlack(sensorValues); delay(20); }
 
-  Serial.println(F("Servidor web listo.\n"));
+  // Countdown
+  Serial.println(F("\n[2/3] Coloca el robot en la pista..."));
+  for (int i = 5; i > 0; i--)
+  {
+    Serial.print(F("      Arranca en ")); Serial.print(i); Serial.println(F("s..."));
+    delay(1000);
+  }
+
+  // Reset PID
+  pidError = 0; pidErrorAnt = 0; pidIntegral = 0;
+  Serial.println(F("\n[3/3] ARRANCANDO!\n"));
 }
 
 // ===================== LOOP =====================
 
 void loop()
 {
-  server.handleClient();
+  uint16_t posicion = qtr.readLineBlack(sensorValues);
+  pidError = (int)posicion - 3500;
 
-  if (Serial.available())
+  // Deteccion de linea
+  bool lineaDetectada = false;
+  int  activos        = 0;
+  for (int i = 0; i < NUM_SENSORS; i++)
+    if (sensorValues[i] > 500) { lineaDetectada = true; activos++; }
+
+  // Sin linea: girar hacia el ultimo lado conocido
+  if (!lineaDetectada || activos < 2)
   {
-    String cmd = Serial.readStringUntil('\n');
-    ejecutarComando(cmd);
+    if (pidErrorAnt > 0) moverMotores(velocidadBase / 2, -velocidadBase / 2);
+    else                 moverMotores(-velocidadBase / 2,  velocidadBase / 2);
+    return;
   }
 
+  // PID
+  pidIntegral += pidError;
+  pidIntegral  = constrain(pidIntegral, -600, 600);
+
+  int derivada = pidError - pidErrorAnt;
+  int correccion = constrain(
+    (int)(Kp * pidError + Ki * pidIntegral + Kd * derivada),
+    -150, 150);
+  pidErrorAnt = pidError;
+
+  // Velocidad adaptativa
+  int velBase = (abs(pidError) < 200)  ? velocidadBase
+              : (abs(pidError) > 2000) ? max(80, velocidadBase - 80)
+              :                          max(80, velocidadBase - 40);
+
+  int velIzq = constrain(velBase - correccion, 0, VEL_MAX);
+  int velDer = constrain(velBase + correccion, 0, VEL_MAX);
+
+  moverMotores(velIzq, velDer);
+
+  // Debug por Serial
+  static unsigned long ultimaPrint = 0;
+  if (millis() - ultimaPrint >= 200)
+  {
+    ultimaPrint = millis();
+    Serial.print(F("POS:")); Serial.print(posicion);
+    Serial.print(F(" ERR:")); Serial.print(pidError);
+    Serial.print(F(" CORR:")); Serial.print(correccion);
+    Serial.print(F(" VL:")); Serial.print(velIzq);
+    Serial.print(F(" VR:")); Serial.println(velDer);
+  }
 }
