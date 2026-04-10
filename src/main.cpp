@@ -35,7 +35,7 @@ uint16_t sensorValues[NUM_SENSORS];
 
 bool     calibrado = false;
 bool     motorOn   = false;
-int      velocidad = 150;
+int      velocidad = 200;
 int      offsetIzq = 0;
 int      offsetDer = 0;
 uint16_t posActual = 3500;
