@@ -37,7 +37,7 @@ bool     calibrado = false;
 bool     motorOn   = false;
 int      velocidad = 200;
 int      offsetIzq = 0;
-int      offsetDer = 0;
+int      offsetDer = -5;
 uint16_t posActual = 3500;
 int      pasoMs    = 300;
 
@@ -152,8 +152,8 @@ void ejecutarComando(String cmd)
         int velBase  = (abs(pidError) < 200) ? velocidad
                      : (abs(pidError) > 2000) ? max(80, velocidad-80)
                      :                          max(80, velocidad-40);
-        pidVelIzq = constrain(velBase + pidCorr, 0, VEL_MAX);
-        pidVelDer = constrain(velBase - pidCorr, 0, VEL_MAX);
+        pidVelIzq = constrain(velBase - pidCorr, 0, VEL_MAX);
+        pidVelDer = constrain(velBase + pidCorr, 0, VEL_MAX);
         moverMotores(pidVelIzq, pidVelDer);
         server.handleClient();
       }
