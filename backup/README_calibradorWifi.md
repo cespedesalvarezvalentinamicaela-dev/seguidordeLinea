@@ -92,6 +92,32 @@ Muestra en tiempo real:
 
 Los cambios de velocidad y offset tienen efecto inmediato si los motores están encendidos.
 
+### Simulacion PID
+
+| Botón / Control | Acción |
+|-----------------|--------|
+| **INICIAR PID** | Arranca el seguidor de línea con control PID. Requiere calibración previa. |
+| **PARAR PID**   | Detiene el PID y para los motores. |
+| **Slider Kp**   | Ganancia proporcional (0–1.00, default 0.35) |
+| **Slider Ki**   | Ganancia integral (0–0.001, default 0.0003) |
+| **Slider Kd**   | Ganancia derivativa (0–1.00, default 0.20) |
+
+Panel de telemetría en tiempo real (visible mientras el PID está activo):
+
+| Campo  | Significado |
+|--------|-------------|
+| `ERR`  | Error de posición respecto al centro (negativo=línea a la izq, positivo=a la der) |
+| `CORR` | Corrección calculada por el PID (se suma/resta a la velocidad base) |
+| `VL`   | Velocidad efectiva rueda izquierda (0–255) |
+| `VR`   | Velocidad efectiva rueda derecha (0–255) |
+
+El PID usa velocidad adaptativa según la curvatura detectada:
+- `abs(ERR) < 200` → velocidad base (recto)
+- `abs(ERR) < 2000` → velocidad base − 40 (curva)
+- `abs(ERR) >= 2000` → velocidad base − 80 (curva cerrada)
+
+Si pierde la línea, gira hacia el último lado conocido hasta recuperarla.
+
 ### D-pad paso a paso
 
 Cruz de 4 botones (↑ ↓ ← →) para mover el robot en pasos cortos y observar la respuesta de los sensores en tiempo real.
@@ -139,9 +165,11 @@ Si el cable USB está conectado, también se aceptan comandos por Serial (9600 b
 
 ```
 CAL   GO   BACK   MSTOP   STOP   TEST
-V <n>   L+   L-   R+   R-
+V <n>   L+   L-   R+   R-   RESET_OFF
 STEP_FWD   STEP_BACK   STEP_LEFT   STEP_RIGHT
 PASO <ms>
+PID_ON   PID_OFF
+KP <valor>   KI <valor>   KD <valor>
 ```
 
 ---
