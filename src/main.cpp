@@ -136,8 +136,8 @@ void ejecutarComando(String cmd)
   else if (cmd == "RESET_OFF") { offsetIzq = 0; offsetDer = 0; if (motorOn) moverMotores(velocidad, velocidad); }
   else if (cmd == "STEP_FWD")  { moverMotores( velocidad,  velocidad); delay(pasoMs); detener(); }
   else if (cmd == "STEP_BACK") { moverMotores(-velocidad, -velocidad); delay(pasoMs); detener(); }
-  else if (cmd == "STEP_LEFT") { moverMotores(-velocidad,  velocidad); delay(pasoMs); detener(); }
-  else if (cmd == "STEP_RIGHT"){ moverMotores( velocidad, -velocidad); delay(pasoMs); detener(); }
+  else if (cmd == "STEP_LEFT") { moverMotores( velocidad, -velocidad); delay(pasoMs); detener(); }
+  else if (cmd == "STEP_RIGHT"){ moverMotores(-velocidad,  velocidad); delay(pasoMs); detener(); }
   else if (cmd == "PID_ON")
   {
     if (!calibrado) return;
