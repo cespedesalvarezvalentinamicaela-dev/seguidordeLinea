@@ -32,9 +32,9 @@ int offsetDer = -5;   // rueda derecha calibrada a 195
 
 int   velocidadBase = 200;
 
-float Kp = 0.08f;
+float Kp = 0.05f;
 float Ki = 0.0f;
-float Kd = 0.04f;
+float Kd = 0.02f;
 
 int  pidError    = 0;
 int  pidErrorAnt = 0;
@@ -133,9 +133,10 @@ void loop()
   pidIntegral  = constrain(pidIntegral, -600, 600);
 
   int derivada   = pidError - pidErrorAnt;
+  int corrMax    = (abs(pidError) < 500) ? 30 : (abs(pidError) < 2000) ? 80 : 150;
   int correccion = constrain(
     (int)(Kp * pidError + Ki * pidIntegral + Kd * derivada),
-    -120, 120);
+    -corrMax, corrMax);
   pidErrorAnt = pidError;
 
   int velIzq, velDer;
