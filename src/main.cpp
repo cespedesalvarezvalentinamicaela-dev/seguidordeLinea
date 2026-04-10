@@ -39,6 +39,7 @@ int      velocidad = 200;
 int      offsetIzq = 0;
 int      offsetDer = 0;
 uint16_t posActual = 3500;
+int      pasoMs    = 300;   // duración de cada paso (ms)
 
 // ===================== MOTORES =====================
 
@@ -119,10 +120,18 @@ void ejecutarComando(String cmd)
   else if (cmd == "L-") { offsetIzq = constrain(offsetIzq - 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
   else if (cmd == "R+") { offsetDer = constrain(offsetDer + 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
   else if (cmd == "R-") { offsetDer = constrain(offsetDer - 5, -127, 127); if (motorOn) moverMotores(velocidad, velocidad); }
+  else if (cmd == "STEP_FWD")  { moverMotores( velocidad,  velocidad); delay(pasoMs); detener(); }
+  else if (cmd == "STEP_BACK") { moverMotores(-velocidad, -velocidad); delay(pasoMs); detener(); }
+  else if (cmd == "STEP_LEFT") { moverMotores(-velocidad,  velocidad); delay(pasoMs); detener(); }
+  else if (cmd == "STEP_RIGHT"){ moverMotores( velocidad, -velocidad); delay(pasoMs); detener(); }
   else if (cmd.startsWith("V "))
   {
     velocidad = constrain(cmd.substring(2).toInt(), 0, 255);
     if (motorOn) moverMotores(velocidad, velocidad);
+  }
+  else if (cmd.startsWith("PASO "))
+  {
+    pasoMs = constrain(cmd.substring(5).toInt(), 50, 2000);
   }
 }
 
@@ -157,6 +166,9 @@ button:active{background:#0f0;color:#000}
 .vel-row{display:flex;align-items:center;gap:10px;margin:6px 0}
 input[type=range]{flex:1;accent-color:#0f0;height:6px}
 .vv{min-width:28px;text-align:right}
+.dpad{display:grid;grid-template-columns:1fr 1fr 1fr;grid-template-rows:1fr 1fr 1fr;gap:6px;width:180px;margin:8px auto}
+.dpad button{padding:16px 0;font-size:20px}
+.dpad .mid{display:flex;align-items:center;justify-content:center;color:#333;font-size:12px}
 </style>
 </head>
 <body>
@@ -183,6 +195,24 @@ input[type=range]{flex:1;accent-color:#0f0;height:6px}
   <button onclick="cmd('MSTOP')">&#9646;&#9646; STOP</button>
 </div>
 <div class="row"><button onclick="cmd('TEST')">TEST secuencia</button></div>
+
+<h2>Paso a paso</h2>
+<div class="dpad">
+  <div></div>
+  <button onclick="cmd('STEP_FWD')">&#9650;</button>
+  <div></div>
+  <button onclick="cmd('STEP_LEFT')">&#9664;</button>
+  <div class="mid">PASO</div>
+  <button onclick="cmd('STEP_RIGHT')">&#9654;</button>
+  <div></div>
+  <button onclick="cmd('STEP_BACK')">&#9660;</button>
+  <div></div>
+</div>
+<div class="vel-row" style="margin-top:6px">
+  <span style="font-size:12px;color:#888">Duracion:</span>
+  <input type="range" id="paso" min="50" max="2000" value="300" oninput="onPaso(this.value)">
+  <span class="vv" id="pv">300ms</span>
+</div>
 
 <h2>Velocidad</h2>
 <div class="vel-row">
@@ -220,6 +250,13 @@ function onVel(v){
   vt=setTimeout(()=>cmd('V '+v),400);
 }
 
+let pt;
+function onPaso(v){
+  document.getElementById('pv').textContent=v+'ms';
+  clearTimeout(pt);
+  pt=setTimeout(()=>cmd('PASO '+v),400);
+}
+
 function tick(){
   fetch('/status').then(r=>r.json()).then(d=>{
     document.getElementById('st').innerHTML=
@@ -246,6 +283,8 @@ function tick(){
 
     document.getElementById('vel').value=d.vel;
     document.getElementById('vv').textContent=d.vel;
+    document.getElementById('paso').value=d.paso;
+    document.getElementById('pv').textContent=d.paso+'ms';
   }).catch(()=>{});
 }
 setInterval(tick,300);
@@ -280,6 +319,7 @@ void handleStatus()
   json += "\"der\":"  + String(offsetDer) + ",";
   json += "\"vi\":"   + String(vi) + ",";
   json += "\"vd\":"   + String(vd) + ",";
+  json += "\"paso\":"  + String(pasoMs) + ",";
   json += "\"pos\":"  + String(posActual) + ",";
   json += "\"s\":[";
   for (int i = 0; i < NUM_SENSORS; i++)
