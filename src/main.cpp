@@ -44,9 +44,9 @@ int      pasoMs    = 300;
 // ===================== PID =====================
 
 bool  pidOn        = false;
-float Kp           = 0.35f;
-float Ki           = 0.0003f;
-float Kd           = 0.20f;
+float Kp           = 0.08f;
+float Ki           = 0.0001f;
+float Kd           = 0.05f;
 int   pidError     = 0;
 int   pidErrorAnt  = 0;
 long  pidIntegral  = 0;
@@ -271,9 +271,9 @@ input[type=range]{flex:1;accent-color:#0f0;height:6px}
   <button onclick="cmd('PID_OFF')" style="flex:1">STOP</button>
 </div>
 <div style="margin-top:8px">
-  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Kp</span><input type="range" id="kp" min="0" max="100" value="35" oninput="onK('kp',this.value,100)"><span class="vv" id="kpv">0.35</span></div>
-  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Ki</span><input type="range" id="ki" min="0" max="100" value="3"  oninput="onK('ki',this.value,100000)"><span class="vv" id="kiv">0.0003</span></div>
-  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Kd</span><input type="range" id="kd" min="0" max="100" value="20" oninput="onK('kd',this.value,100)"><span class="vv" id="kdv">0.20</span></div>
+  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Kp</span><input type="range" id="kp" min="0" max="100" value="8"  oninput="onK('kp',this.value,100)"><span class="vv" id="kpv">0.08</span></div>
+  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Ki</span><input type="range" id="ki" min="0" max="100" value="1"  oninput="onK('ki',this.value,100000)"><span class="vv" id="kiv">0.0001</span></div>
+  <div class="vel-row"><span style="font-size:12px;color:#888;min-width:28px">Kd</span><input type="range" id="kd" min="0" max="100" value="5"  oninput="onK('kd',this.value,100)"><span class="vv" id="kdv">0.05</span></div>
 </div>
 
 <h2>Velocidad</h2>
