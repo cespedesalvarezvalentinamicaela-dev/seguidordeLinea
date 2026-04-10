@@ -32,9 +32,9 @@ int offsetDer = -5;   // rueda derecha calibrada a 195
 
 int   velocidadBase = 200;
 
-float Kp = 0.08f;
-float Ki = 0.0001f;
-float Kd = 0.05f;
+float Kp = 0.03f;
+float Ki = 0.0f;
+float Kd = 0.01f;
 
 int  pidError    = 0;
 int  pidErrorAnt = 0;
@@ -120,6 +120,10 @@ void setup()
 
 void loop()
 {
+  static unsigned long ultimoPID = 0;
+  if (millis() - ultimoPID < 10) return;
+  ultimoPID = millis();
+
   uint16_t posicion = qtr.readLineBlack(sensorValues);
   pidError = (int)posicion - 3500;
 
@@ -144,7 +148,7 @@ void loop()
   int derivada = pidError - pidErrorAnt;
   int correccion = constrain(
     (int)(Kp * pidError + Ki * pidIntegral + Kd * derivada),
-    -150, 150);
+    -50, 50);
   pidErrorAnt = pidError;
 
   // Velocidad adaptativa
